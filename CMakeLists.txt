@@ -7,6 +7,7 @@ set(CMODE "" CACHE STRING "What version are we compiling (PARis or LISbon).")
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 macro(generate_paris)
+	add_subdirectory(xpsrld4)
 endmacro()
 
 macro(generate_lisbon)
