@@ -12,6 +12,7 @@ endmacro()
 
 macro(generate_lisbon)
 	add_subdirectory(esp301) # ESP301 engine control
+	add_subdirectory(nidaq)
 endmacro()
 
 if(CMODE STREQUAL "")
