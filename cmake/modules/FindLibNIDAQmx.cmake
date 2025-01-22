@@ -4,13 +4,16 @@ set(_pf_x86 "$ENV{ProgramFiles\(x86\)}/${NI_PPATH}")
 list(APPEND NIDAQMX_PATH ${_pf_x86})
 
 # Search on any other locations case necessary
-list(APPEND NIDAQMX_PATH "H:/NI/Shared/ExternalCompilerSupport/C")
+# list(APPEND NIDAQMX_PATH "C:/ProgramFiles(x86)/National Instruments/Shared/ExternalCompilerSupport/C")
 
 # Find installed library using CMake functions
 find_library(LIBNIDAQMX_LIBRARY 
-			NAMES "NIDAQmx"
+			NAMES "nidaqmx"
             PATHS ${NIDAQMX_PATH}
-            PATH_SUFFIXES "lib64/msvc;lib64/gcc")
+            PATH_SUFFIXES "lib64/msvc")
+
+message(STATUS ${LIBNIDAQMX_LIBRARY})
+message(STATUS ${NIDAQMX_PATH})
             
 find_path(LIBNIDAQMX_INCLUDE_DIR 
 			NAMES "NIDAQmx.h"

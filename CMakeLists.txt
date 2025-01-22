@@ -4,7 +4,11 @@ project(neodcs VERSION 1.0.0)
 
 set(CMODE "" CACHE STRING "What version are we compiling (PARis or LISbon).")
 
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# Add find modules to module path
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/modules/")
 
 macro(generate_paris)
 	add_subdirectory(xpsrld4)
