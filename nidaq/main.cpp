@@ -293,11 +293,11 @@ bool NIDaq::gotError(std::int32_t error)
 		log.error("NI Error: %s.", nierr.message.c_str());
 		return true;
 	}
-	else if(nierr.status == NIError::Status::WARN)
-	{
-		log.warn("NI WARN: %s.", nierr.message.c_str());
-		return false;
-	}
+	// else if(nierr.status == NIError::Status::WARN)
+	// {
+	// 	log.warn("NI Warning: %s.", nierr.message.c_str());
+	// 	return false;
+	// }
 
 	return false;
 }
