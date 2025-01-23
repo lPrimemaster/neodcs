@@ -1,5 +1,5 @@
-import { Component, For, Show, createSignal } from 'solid-js';
-import { Tooltip, TooltipContent, TooltipTrigger } from './components/ui/tooltip';
+import { Component, For, Show, createSignal, onMount } from 'solid-js';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip';
 
 type MxSelectorSize = 'small' | 'medium' | 'large' | 'xlarge';
 
@@ -61,6 +61,13 @@ export const MxSelector : Component<MxSelectorProps> = (props) => {
 		arrow_size = '32px';
 		arrow_offset = '-mb-2';
 	}
+
+	onMount(() => {
+		setTimeout(
+			() => setActiveItem(props.value),
+			100
+		);
+	});
 
 	const style = size_pad + ' rounded-md shadow-md grid grid-cols-1 bg-blue-300' 
 		+ (props.class || '');
