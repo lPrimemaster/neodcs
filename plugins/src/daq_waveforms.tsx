@@ -90,13 +90,13 @@ const WaveformPlugin : Component = () => {
 			<Show when={xdata().length > 0}>
 				<Card title="Waveform">
 					<div class="mb-5">
-							<MxGenericPlot
-								series={[{}, { label: 'Waveform', stroke: 'black' }]}
-								x={xdata()}
-								y={[ydata()]}
-								scales={{ x: { time: false }, y: { range: [-10, 10] } }}
-								class="h-56 w-full"
-							/>
+						<MxGenericPlot
+							series={[{}, { label: 'Waveform', stroke: 'black' }]}
+							x={xdata()}
+							y={[ydata()]}
+							scales={{ x: { time: false }, y: { range: [-10, 10] } }}
+							class="h-56 w-full"
+						/>
 					</div>
 				</Card>
 			</Show>
