@@ -85,7 +85,7 @@ public:
 	void dispatchChannelEvents(TaskHandle task, std::vector<double> data, std::uint64_t timestamp, uInt32 nchannels);
 
 public:
-	static constexpr std::uint64_t SAMPLES_PER_CHANNEL = 1000;
+	static constexpr std::uint64_t SAMPLES_PER_CHANNEL = 10000;
 
 private:
 	void createTask(const char* name = "");
