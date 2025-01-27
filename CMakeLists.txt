@@ -11,13 +11,16 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/modules/")
 
 macro(generate_paris)
-	add_subdirectory(xpsrld4)
+	add_subdirectory(xpsrld4) 		# XPS-RLD4 engine control
+	add_subdirectory(eib7) 			# Encoder readout from EIB7
+	add_subdirectory(nidaq_ci)  	# NI CI controler
+	add_subdirectory(temperature)	# Crystal temperature readout
 endmacro()
 
 macro(generate_lisbon)
-	add_subdirectory(esp301) # ESP301 engine control
-	add_subdirectory(nidaq)
-	add_subdirectory(composer)
+	add_subdirectory(esp301)   # ESP301 engine control
+	add_subdirectory(nidaq_ai) # NI AI controler
+	add_subdirectory(composer) # File writer / Online analysis
 endmacro()
 
 if(CMODE STREQUAL "")

@@ -60,7 +60,7 @@ Composer::Composer(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
 
 	registerRunStartStop(&Composer::startMeasurement, &Composer::stopMeasurement);
 
-	subscribeEvent("nidaq::apd0_signal", [this](const auto* data, auto len, const auto* udata) {
+	subscribeEvent("aidaq::apd0_signal", [this](const auto* data, auto len, const auto* udata) {
 		ADCBuffer buffer = convertEventData(std::vector<uint8_t>(data, data + len));
 		deferExec([this, buffer]() {
 

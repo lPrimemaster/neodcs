@@ -67,22 +67,22 @@ Xpsrld4::Xpsrld4(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
 	}
 	
 	// Now set the watch for setpoint changes and execute motions
-	rdb["/user/esp301/setpoint/c1"].watch([this](const auto& key, const mulex::RPCGenericType& value) {
+	rdb["/user/xpsrld4/setpoint/c1"].watch([this](const auto& key, const mulex::RPCGenericType& value) {
 		// Plan move as soon as possible
 		double pos = value;
 		deferExec([this, pos](){ moveEngineAbsolute(Engine::C1, pos); });
 	});
-	rdb["/user/esp301/setpoint/c2"].watch([this](const auto& key, const mulex::RPCGenericType& value) {
+	rdb["/user/xpsrld4/setpoint/c2"].watch([this](const auto& key, const mulex::RPCGenericType& value) {
 		// Plan move as soon as possible
 		double pos = value;
 		deferExec([this, pos](){ moveEngineAbsolute(Engine::C2, pos); });
 	});
-	rdb["/user/esp301/setpoint/detector"].watch([this](const auto& key, const mulex::RPCGenericType& value) {
+	rdb["/user/xpsrld4/setpoint/detector"].watch([this](const auto& key, const mulex::RPCGenericType& value) {
 		// Plan move as soon as possible
 		double pos = value;
 		deferExec([this, pos](){ moveEngineAbsolute(Engine::DET, pos); });
 	});
-	rdb["/user/esp301/setpoint/table"].watch([this](const auto& key, const mulex::RPCGenericType& value) {
+	rdb["/user/xpsrld4/setpoint/table"].watch([this](const auto& key, const mulex::RPCGenericType& value) {
 		// Plan move as soon as possible
 		double pos = value;
 		deferExec([this, pos](){ moveEngineAbsolute(Engine::TABLE, pos); });

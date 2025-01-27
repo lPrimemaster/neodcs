@@ -44,7 +44,7 @@ const WaveformPlugin : Component = () => {
 	}
 
 	function captureWaveform(virtual_channel: string) {
-		MxWebsocket.instance.subscribe('nidaq::' + virtual_channel, (data: Uint8Array) => {
+		MxWebsocket.instance.subscribe('aidaq::' + virtual_channel, (data: Uint8Array) => {
 			// First 64bits are the timestamp
 			const arr = new Float64Array(data.buffer, 8);
 			const ydata = Array.from(arr);
@@ -57,7 +57,7 @@ const WaveformPlugin : Component = () => {
 			setYData(ydata);
 			setXData(xdata);
 			
-			MxWebsocket.instance.unsubscribe('nidaq::' + virtual_channel);
+			MxWebsocket.instance.unsubscribe('aidaq::' + virtual_channel);
 		});
 	}
 
