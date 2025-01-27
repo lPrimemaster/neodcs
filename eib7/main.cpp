@@ -40,7 +40,7 @@ private:
 	};
 	std::unique_ptr<std::thread> _poll_thread;
 	std::atomic<bool> _poll_stop;
-	std::uint32_t _poll_sleep;
+	// std::uint32_t _poll_sleep;
 };
 
 void Eib7::checkError(EIB7_ERR error)
@@ -63,8 +63,8 @@ Eib7::Eib7(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
 	rdb["/user/eib7/ip"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("10.80.0.99"));
 	_hostname = mulex::mxstring<512>(rdb["/user/eib7/hostname"]).c_str();
 
-	rdb["/user/eib7/poll_sleep"].create(mulex::RdbValueType::UINT32, std::uint32_t(100));
-	_poll_sleep = rdb["/user/eib7/poll_sleep"];
+	// rdb["/user/eib7/poll_sleep"].create(mulex::RdbValueType::UINT32, std::uint32_t(100));
+	// _poll_sleep = rdb["/user/eib7/poll_sleep"];
 
 	std::uint32_t ip;
 	std::uint32_t naxes;
@@ -236,7 +236,7 @@ void Eib7::poll()
 				rdb[pos_keys[i]] = edata.axis[i].calpos;
 			}   
 
-			std::this_thread::sleep_for(std::chrono::milliseconds(_poll_sleep));
+			// std::this_thread::sleep_for(std::chrono::milliseconds(_poll_sleep));
 		}
 		else
 		{
@@ -309,7 +309,7 @@ void Eib7::calibrateRefs()
 	if(auto_calib)
 	{
 		log.info("Automatic calibration is ON. Assuming the XPS-RLD4 backend is online.");
-		if(!rdb["/user/xpsrld4/setpoint/c1"].exists())
+		if(!rdb["/user/xpsrld4/c1/setpoint"].exists())
 		{
 			log.error("Could not read setpoint key for XPS-RLD4. Defaulting to manual calibration mode.");
 			auto_calib = false;
@@ -318,8 +318,8 @@ void Eib7::calibrateRefs()
 		{
 			// Assume c2 exists if c1 does
 			// Set all to zero absolute wherever that might be
-			rdb["/user/xpsrld4/setpoint/c1"] = 0.0;
-			rdb["/user/xpsrld4/setpoint/c2"] = 0.0;
+			rdb["/user/xpsrld4/c1/setpoint"] = 0.0;
+			rdb["/user/xpsrld4/c2/setpoint"] = 0.0;
 		}
 	}
 

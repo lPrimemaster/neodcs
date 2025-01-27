@@ -46,10 +46,10 @@ Esp301::Esp301(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
 	// The ESP301 uses an rdb key as a target to move the engines
 	// Every time this target changes, this backend attempts to
 	// move them
-	rdb["/user/esp301/setpoint/c1"].create(mulex::RdbValueType::FLOAT64, 0.0f);
-	rdb["/user/esp301/setpoint/c2"].create(mulex::RdbValueType::FLOAT64, 0.0f);
-	rdb["/user/esp301/setpoint/table"].create(mulex::RdbValueType::FLOAT64, 0.0f);
-	rdb["/user/esp301/setpoint/detector"].create(mulex::RdbValueType::FLOAT64, 0.0f);
+	rdb["/user/esp301/c1/setpoint"].create(mulex::RdbValueType::FLOAT64, 0.0f);
+	rdb["/user/esp301/c2/setpoint"].create(mulex::RdbValueType::FLOAT64, 0.0f);
+	rdb["/user/esp301/table/setpoint"].create(mulex::RdbValueType::FLOAT64, 0.0f);
+	rdb["/user/esp301/detector/setpoint"].create(mulex::RdbValueType::FLOAT64, 0.0f);
 
 	// Default com port
 	rdb["/user/esp301/port"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("COM1"));
@@ -77,22 +77,22 @@ Esp301::Esp301(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
 	}
 	
 	// Now set the watch for setpoint changes and execute motions
-	rdb["/user/esp301/setpoint/c1"].watch([this](const auto& key, const mulex::RPCGenericType& value) {
+	rdb["/user/esp301/c1/setpoint"].watch([this](const auto& key, const mulex::RPCGenericType& value) {
 		// Plan move as soon as possible
 		double pos = value;
 		deferExec([this, pos](){ moveEngineAbsolute(Engine::C1, pos); });
 	});
-	rdb["/user/esp301/setpoint/c2"].watch([this](const auto& key, const mulex::RPCGenericType& value) {
+	rdb["/user/esp301/c2/setpoint"].watch([this](const auto& key, const mulex::RPCGenericType& value) {
 		// Plan move as soon as possible
 		double pos = value;
 		deferExec([this, pos](){ moveEngineAbsolute(Engine::C2, pos); });
 	});
-	rdb["/user/esp301/setpoint/detector"].watch([this](const auto& key, const mulex::RPCGenericType& value) {
+	rdb["/user/esp301/detector/setpoint"].watch([this](const auto& key, const mulex::RPCGenericType& value) {
 		// Plan move as soon as possible
 		double pos = value;
 		deferExec([this, pos](){ moveEngineAbsolute(Engine::DET, pos); });
 	});
-	rdb["/user/esp301/setpoint/table"].watch([this](const auto& key, const mulex::RPCGenericType& value) {
+	rdb["/user/esp301/table/setpoint"].watch([this](const auto& key, const mulex::RPCGenericType& value) {
 		// Plan move as soon as possible
 		double pos = value;
 		deferExec([this, pos](){ moveEngineAbsolute(Engine::TABLE, pos); });
@@ -203,7 +203,7 @@ void Esp301::moveEngineAbsolute(Engine engine, double pos)
 	command += toStringPrecision(pos, 6);
 	command += ";";
 
-	writeCommand(command);
+	writeCommand(command, false);
 }
 
 int main(int argc, char* argv[])

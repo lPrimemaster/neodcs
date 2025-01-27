@@ -2,18 +2,84 @@
 // Author : César Godinho
 //   Date : 21/01/2025
 
+#include <condition_variable>
+#include <functional>
 #include <mxbackend.h>
 #include <mxdrv.h>
 #include <mxtypes.h>
+#include <queue>
 #include <sstream>
 #include <string>
 #include <iomanip>
+#include <type_traits>
 
 #ifdef __linux__
 #include <fcntl.h>
 #else
 #include <Windows.h>
 #endif
+
+#include "../common/pid.h"
+
+// Simple tiny job queue 
+class JobQueue
+{
+public:
+	JobQueue(std::uint32_t size);
+	~JobQueue();
+	void schedule(std::function<void()>&& job, std::uint32_t id);
+
+private:
+	struct Job
+	{
+		Job() : _worker([this](){
+			while(true)
+			{
+				std::function<void()> task;
+				{
+					std::unique_lock lock(_mutex);
+					_cv.wait(lock, [this](){ return _stop || !_queue.empty(); });
+					if(_stop) return; // Exit even if the queue as scheduled jobs
+					task = std::move(_queue.front());
+					_queue.pop();
+				}
+				task();
+			}
+		}), _stop(false) { }
+
+		Job(Job&& j)
+		{
+			_worker = std::move(j._worker);
+			_stop = false;
+		}
+
+		std::thread _worker;
+		std::queue<std::function<void()>> _queue;
+		std::mutex _mutex;
+		std::condition_variable _cv;
+		bool _stop;
+	};
+
+	std::vector<Job> _jobs;
+};
+
+JobQueue::JobQueue(std::uint32_t size)
+{
+	_jobs.resize(size);
+}
+
+JobQueue::~JobQueue()
+{
+	for(auto& jq : _jobs)
+	{
+		{
+			std::unique_lock lock(jq._mutex);
+			jq._stop = true;
+		}
+		jq._cv.notify_one();
+		jq._worker.join();
+	}
+}
 
 class Xpsrld4 : public mulex::MxBackend
 {
@@ -33,22 +99,93 @@ private:
 	std::string writeCommand(std::string& command, bool response = true);
 	inline std::string toStringPrecision(double value, int prec);
 	void moveEngineAbsolute(Engine engine, double pos);
+	void moveEngine(Engine engine, double pos);
 	bool checkEngineExtents(Engine engine, double pos);
+	void moveEnginePID(Engine engine, double pos, double tolerance);
 
 private:
 	std::string _ip;
 	mulex::DrvTCP _handle;
+	std::string _pos_c1;
+	std::string _pos_c2;
+	std::string _pos_table;
+	std::string _pos_detector;
+
+	double _tolerance_c1;
+	double _tolerance_c2;
+
+	static constexpr std::uint64_t NUM_PID_JOBS = 2;
+	JobQueue _pid_jobs;
+	std::vector<PidController> _pid;
 };
 
-Xpsrld4::Xpsrld4(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
+Xpsrld4::Xpsrld4(int argc, char* argv[]) : mulex::MxBackend(argc, argv), _pid_jobs(NUM_PID_JOBS)
 {
 	// The XPS-RLD4 uses an rdb key as a target to move the engines
-	// Every time this target changes, this backend attempts to
-	// move them
-	rdb["/user/xpsrld4/setpoint/c1"].create(mulex::RdbValueType::FLOAT64, 0.0f);
-	rdb["/user/xpsrld4/setpoint/c2"].create(mulex::RdbValueType::FLOAT64, 0.0f);
-	rdb["/user/xpsrld4/setpoint/table"].create(mulex::RdbValueType::FLOAT64, 0.0f);
-	rdb["/user/xpsrld4/setpoint/detector"].create(mulex::RdbValueType::FLOAT64, 0.0f);
+	// Every time this target changes, this backend attempts to move them
+	rdb["/user/xpsrld4/c1/setpoint"].create(mulex::RdbValueType::FLOAT64, 0.0f);
+	rdb["/user/xpsrld4/c2/setpoint"].create(mulex::RdbValueType::FLOAT64, 0.0f);
+	rdb["/user/xpsrld4/table/setpoint"].create(mulex::RdbValueType::FLOAT64, 0.0f);
+	rdb["/user/xpsrld4/detector/setpoint"].create(mulex::RdbValueType::FLOAT64, 0.0f);
+
+	// Set default PID values
+	rdb["/user/xpsrld4/c1/kp"].create(mulex::RdbValueType::FLOAT64, 0.0);
+	rdb["/user/xpsrld4/c1/ki"].create(mulex::RdbValueType::FLOAT64, 0.0);
+	rdb["/user/xpsrld4/c1/kd"].create(mulex::RdbValueType::FLOAT64, 0.0);
+	rdb["/user/xpsrld4/c1/kmin"].create(mulex::RdbValueType::FLOAT64, 0.0);
+	rdb["/user/xpsrld4/c1/kmax"].create(mulex::RdbValueType::FLOAT64, 0.0);
+	rdb["/user/xpsrld4/c1/kbias"].create(mulex::RdbValueType::FLOAT64, 0.0);
+	rdb["/user/xpsrld4/c1/ktolerance"].create(mulex::RdbValueType::FLOAT64, 0.00005);
+	_tolerance_c1 = rdb["/user/xpsrld4/c1/ktolerance"];
+
+	rdb["/user/xpsrld4/c2/kp"].create(mulex::RdbValueType::FLOAT64, 0.0);
+	rdb["/user/xpsrld4/c2/ki"].create(mulex::RdbValueType::FLOAT64, 0.0);
+	rdb["/user/xpsrld4/c2/kd"].create(mulex::RdbValueType::FLOAT64, 0.0);
+	rdb["/user/xpsrld4/c2/kmin"].create(mulex::RdbValueType::FLOAT64, 0.0);
+	rdb["/user/xpsrld4/c2/kmax"].create(mulex::RdbValueType::FLOAT64, 0.0);
+	rdb["/user/xpsrld4/c2/kbias"].create(mulex::RdbValueType::FLOAT64, 0.0);
+	rdb["/user/xpsrld4/c2/ktolerance"].create(mulex::RdbValueType::FLOAT64, 0.00005);
+	_tolerance_c2 = rdb["/user/xpsrld4/c2/ktolerance"];
+
+	double kp = rdb["/user/xpsrld4/c1/kp"];
+	double ki = rdb["/user/xpsrld4/c1/ki"];
+	double kd = rdb["/user/xpsrld4/c1/kd"];
+	double min = rdb["/user/xpsrld4/c1/kmin"];
+	double max = rdb["/user/xpsrld4/c1/kmax"];
+	double bias = rdb["/user/xpsrld4/c1/kbias"];
+	_pid.push_back(PidController(min, max, kp, kd, ki));
+	_pid.back().setBias(bias);
+
+	kp = rdb["/user/xpsrld4/c2/kp"];
+	ki = rdb["/user/xpsrld4/c2/ki"];
+	kd = rdb["/user/xpsrld4/c2/kd"];
+	min = rdb["/user/xpsrld4/c2/kmin"];
+	max = rdb["/user/xpsrld4/c2/kmax"];
+	bias = rdb["/user/xpsrld4/c2/kbias"];
+	_pid.push_back(PidController(min, max, kp, kd, ki));
+	_pid.back().setBias(bias);
+
+	// Default positioners
+	rdb["/user/xpsrld4/c1/positioner"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("C1.Pos"));
+	rdb["/user/xpsrld4/c2/positioner"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("C2.Pos"));
+	rdb["/user/xpsrld4/table/positioner"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("Table.Pos"));
+	rdb["/user/xpsrld4/detector/positioner"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("Detector.Pos"));
+	_pos_c1 	  = std::string(static_cast<mulex::mxstring<512>>(rdb["/user/xpsrld4/c1/positioner"]).c_str());
+	_pos_c2 	  = std::string(static_cast<mulex::mxstring<512>>(rdb["/user/xpsrld4/c2/positioner"]).c_str());
+	_pos_table 	  = std::string(static_cast<mulex::mxstring<512>>(rdb["/user/xpsrld4/table/positioner"]).c_str());
+	_pos_detector = std::string(static_cast<mulex::mxstring<512>>(rdb["/user/xpsrld4/detector/positioner"]).c_str());
+	rdb["/user/xpsrld4/c1/positioner"].watch([this](const auto& key, const mulex::RPCGenericType& value) {
+		_pos_c1 = mulex::mxstring<512>(value).c_str();
+	});
+	rdb["/user/xpsrld4/c2/positioner"].watch([this](const auto& key, const mulex::RPCGenericType& value) {
+		_pos_c2 = mulex::mxstring<512>(value).c_str();
+	});
+	rdb["/user/xpsrld4/table/positioner"].watch([this](const auto& key, const mulex::RPCGenericType& value) {
+		_pos_table = mulex::mxstring<512>(value).c_str();
+	});
+	rdb["/user/xpsrld4/detector/positioner"].watch([this](const auto& key, const mulex::RPCGenericType& value) {
+		_pos_detector = mulex::mxstring<512>(value).c_str();
+	});
 
 	// Default ip
 	rdb["/user/xpsrld4/ip"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("10.80.0.100"));
@@ -67,22 +204,22 @@ Xpsrld4::Xpsrld4(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
 	}
 	
 	// Now set the watch for setpoint changes and execute motions
-	rdb["/user/xpsrld4/setpoint/c1"].watch([this](const auto& key, const mulex::RPCGenericType& value) {
+	rdb["/user/xpsrld4/c1/setpoint"].watch([this](const auto& key, const mulex::RPCGenericType& value) {
 		// Plan move as soon as possible
 		double pos = value;
 		deferExec([this, pos](){ moveEngineAbsolute(Engine::C1, pos); });
 	});
-	rdb["/user/xpsrld4/setpoint/c2"].watch([this](const auto& key, const mulex::RPCGenericType& value) {
+	rdb["/user/xpsrld4/c2/setpoint"].watch([this](const auto& key, const mulex::RPCGenericType& value) {
 		// Plan move as soon as possible
 		double pos = value;
 		deferExec([this, pos](){ moveEngineAbsolute(Engine::C2, pos); });
 	});
-	rdb["/user/xpsrld4/setpoint/detector"].watch([this](const auto& key, const mulex::RPCGenericType& value) {
+	rdb["/user/xpsrld4/detector/setpoint"].watch([this](const auto& key, const mulex::RPCGenericType& value) {
 		// Plan move as soon as possible
 		double pos = value;
 		deferExec([this, pos](){ moveEngineAbsolute(Engine::DET, pos); });
 	});
-	rdb["/user/xpsrld4/setpoint/table"].watch([this](const auto& key, const mulex::RPCGenericType& value) {
+	rdb["/user/xpsrld4/table/setpoint"].watch([this](const auto& key, const mulex::RPCGenericType& value) {
 		// Plan move as soon as possible
 		double pos = value;
 		deferExec([this, pos](){ moveEngineAbsolute(Engine::TABLE, pos); });
@@ -163,7 +300,41 @@ void Xpsrld4::moveEngineAbsolute(Engine engine, double pos)
 
 	if(!checkEngineExtents(engine, pos))
 	{
-		log.error("Failed to move engine %d to position %lf", static_cast<int>(engine), pos);
+		log.error("Failed to increment engine %d to theoretical position %lf", static_cast<int>(engine), pos);
+		return;
+	}
+
+	switch(engine)
+	{
+		// C1/C2 can move at the same time assuming the xps-rld4 supports it
+		case Engine::C1:
+		{
+			_pid_jobs.schedule([this, engine, pos](){ moveEnginePID(engine, pos, _tolerance_c1); }, 0);
+			break;
+		}
+		case Engine::C2:
+		{
+			_pid_jobs.schedule([this, engine, pos](){ moveEnginePID(engine, pos, _tolerance_c2); }, 1);
+			break;
+		}
+		case Engine::DET:
+		case Engine::TABLE:
+		{
+			// Detector and table cannot move at the same time
+			// Nor at the same time than C1/C2
+			moveEngine(engine, pos);
+			break;
+		}
+	}
+}
+
+void Xpsrld4::moveEngine(Engine engine, double pos)
+{
+	std::string command;
+
+	if(!checkEngineExtents(engine, pos))
+	{
+		log.error("Failed to increment engine %d to theoretical position %lf", static_cast<int>(engine), pos);
 		return;
 	}
 
@@ -171,28 +342,64 @@ void Xpsrld4::moveEngineAbsolute(Engine engine, double pos)
 	{
 		case Engine::C1:
 		{
-			command = "1PA";
+			command = "GroupMoveRelative(" + _pos_c1 + "," + std::to_string(pos) + ")";
 			break;
 		}
 		case Engine::C2:
 		{
-			command = "2PA";
+			command = "GroupMoveRelative(" + _pos_c2 + "," + std::to_string(pos) + ")";
 			break;
 		}
 		case Engine::DET:
 		{
-			command = "3PA";
+			command = "GroupMoveAbsolute(" + _pos_detector + "," + std::to_string(pos) + ")";
 			break;
 		}
 		case Engine::TABLE:
 		{
+			command = "GroupMoveAbsolute(" + _pos_table + "," + std::to_string(pos) + ")";
 			break;
 		}
 	}
-	command += toStringPrecision(pos, 6);
-	command += ";";
 
 	writeCommand(command);
+}
+
+void Xpsrld4::moveEnginePID(Engine engine, double pos, double tolerance)
+{
+	std::underlying_type_t<Engine> axis = static_cast<std::underlying_type_t<Engine>>(engine);
+	if(axis > 1)
+	{
+		log.error("Cannot move with PID engine that uses positon self-referencing on XPS-RLD4.");
+		return;
+	}
+
+	double read_pos = rdb["/user/eib7/axis/" + std::to_string(axis) + "/position"];
+	PidController& pid = _pid[axis];
+	pid.setTarget(pos);
+	double err = pid.getError(read_pos);
+
+	const std::uint32_t maxtries = 5;
+	std::uint32_t ntry = 0;
+	while(std::abs(err) > tolerance)
+	{
+		if(++ntry > maxtries)
+		{
+			log.warn("Moving engine reached max tries on PID. Aborting...");
+			break;
+		}
+
+		double move = pid.correct(read_pos);
+
+		// NOTE: (Cesar) How long does this take? Is the return just an ACK? Or does it wait for motion to end?
+		moveEngine(engine, move);
+
+		// NOTE: (Cesar) Wait to stabilize (is this necessary?) - At least the trigger period of the encoder
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+		read_pos = rdb["/user/eib7/axis/" + std::to_string(axis) + "/position"];
+		err = pid.getError(read_pos);
+	}
 }
 
 int main(int argc, char* argv[])
