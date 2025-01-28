@@ -145,14 +145,12 @@ struct AnalogPeak : Serializable
 
 struct CountEvent : Serializable
 {
-	ADCBuffer waveform;
 	std::vector<AnalogPeak> peaks;
 	std::uint64_t counts;
 	std::int64_t timestamp; // This is the timestamp at EVALUTATION TIME!
 
-	CountEvent(const ADCBuffer& buffer, std::vector<AnalogPeak> peaks, std::uint64_t counts, std::int64_t timestamp)
+	CountEvent(std::vector<AnalogPeak> peaks, std::uint64_t counts, std::int64_t timestamp)
 	{
-		waveform = buffer;
 		peaks = peaks;
 		counts = counts;
 		timestamp = timestamp;
@@ -161,7 +159,6 @@ struct CountEvent : Serializable
 	inline virtual std::vector<std::uint8_t> serialize() const override
 	{
 		std::vector<std::uint8_t> buffer;
-		FromValue(buffer, waveform);
 		FromVector(buffer, peaks);
 		FromValue(buffer, counts);
 		FromValue(buffer, timestamp);
@@ -170,7 +167,6 @@ struct CountEvent : Serializable
 
 	inline virtual void deserialize(std::vector<std::uint8_t>& buffer) override
 	{
-		ToValue(buffer, waveform);
 		ToVector(buffer, peaks);
 		ToValue(buffer, counts);
 		ToValue(buffer, timestamp);

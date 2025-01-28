@@ -6,7 +6,9 @@
 #include <mxbackend.h>
 #include <mxtypes.h>
 #include <numeric>
+#include <thread>
 #include "../types.h"
+#include "../common/math.h"
 
 class Composer : public mulex::MxBackend
 {
@@ -21,12 +23,48 @@ public:
 	void startMeasurement(std::uint64_t runno);
 	void stopMeasurement(std::uint64_t runno);
 
+	double clinometerIncrementAverage(double value, double& average, std::uint64_t& n);
+	double clinometerReadAverage(double& average, std::uint64_t& n);
+
 private:
 	std::uint64_t _cps;
 	double _height_thr;
 	std::uint64_t _width_thr;
 	std::uint64_t _avg_window;
+
+	std::mutex    _clinometer_mtx;
+	double 	      _clinometer0_x;
+	std::uint64_t _clinometer0_x_n;
+
+	double 	      _clinometer0_y;
+	std::uint64_t _clinometer0_y_n;
 };
+
+double Composer::clinometerIncrementAverage(double value, double& average, std::uint64_t& n)
+{
+	std::unique_lock lock(_clinometer_mtx);
+	average *= n;
+	average += value;
+	average /= ++n;
+	return average;
+}
+
+double Composer::clinometerReadAverage(double& average, std::uint64_t& n)
+{
+	std::unique_lock lock(_clinometer_mtx);
+	double out = average;
+	average = 0.0;
+	n = 0;
+	return out;
+}
+
+static double ClinometerVoltageToDeg(double value)
+{
+	// [0, 5] -> [-10, 10]
+	constexpr double gain = 4.0;
+	constexpr double bias = -10.0;
+	return value * gain + bias;
+}
 
 Composer::Composer(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
 {
@@ -63,7 +101,6 @@ Composer::Composer(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
 	subscribeEvent("aidaq::apd0_signal", [this](const auto* data, auto len, const auto* udata) {
 		ADCBuffer buffer = convertEventData(std::vector<uint8_t>(data, data + len));
 		deferExec([this, buffer]() {
-
 			ADCBuffer waveform;
 			if(_avg_window > 0)
 			{
@@ -80,16 +117,58 @@ Composer::Composer(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
 			{
 				// Found peaks on APD 0!
 				// Issue count events
-				CountEvent event(buffer, peaks, peaks.size(), mulex::SysGetCurrentTime());
+				CountEvent event(peaks, peaks.size(), mulex::SysGetCurrentTime());
 				std::vector<std::uint8_t> event_buffer = event.serialize();
+				mulex::LogDebug("Peaks found: %llu. Buffer size: %llu.", peaks.size(), event_buffer.size());
 				dispatchEvent("composer::count", event_buffer);
 				_cps += peaks.size();
 			}
 
-			mulex::LogDebug("Peaks found: %llu.", peaks.size());
 			// mulex::LogDebug("maw: %llu | w: %llu | h: %lf", _avg_window, _width_thr, _height_thr);
 		});
 	});
+
+	registerEvent("composer::dummy");
+	// deferExec([this]() {
+	// 	std::thread([this](){
+	// 		while(true)
+	// 		{
+	// 			static std::vector<std::uint8_t> buffer(10240000);
+	// 			dispatchEvent("composer::dummy", buffer);
+	// 			std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+	// 		}
+	//     }).detach();
+	// }, 1000);
+
+	deferExec([this](){
+		static std::vector<std::uint8_t> buffer(10240000);
+		dispatchEvent("composer::dummy", buffer);
+	}, 0, 1000);
+
+	rdb["/user/clinometer/0/x"].create(mulex::RdbValueType::FLOAT64, 0.0);
+	rdb["/user/clinometer/0/y"].create(mulex::RdbValueType::FLOAT64, 0.0);
+
+	subscribeEvent("aidaq::clinometerx", [this](const auto* data, auto len, const auto* udata) {
+		ADCBuffer buffer = convertEventData(std::vector<uint8_t>(data, data + len));
+
+		// Try and use the rdb
+		// rdb["/user/clinometer/0/x"] = ClinometerVoltageToDeg(MathAverageArray(buffer.waveform));
+		clinometerIncrementAverage(ClinometerVoltageToDeg(MathAverageArray(buffer.waveform)), _clinometer0_x, _clinometer0_x_n);
+	});
+
+	subscribeEvent("aidaq::clinometery", [this](const auto* data, auto len, const auto* udata) {
+		ADCBuffer buffer = convertEventData(std::vector<uint8_t>(data, data + len));
+
+		// Try and use the rdb
+		// rdb["/user/clinometer/0/y"] = ClinometerVoltageToDeg(MathAverageArray(buffer.waveform));
+		clinometerIncrementAverage(ClinometerVoltageToDeg(MathAverageArray(buffer.waveform)), _clinometer0_y, _clinometer0_y_n);
+	});
+
+	// Average over 500 ms
+	deferExec([this](){
+		if(_clinometer0_x_n > 0) rdb["/user/clinometer/0/x"] = clinometerReadAverage(_clinometer0_x, _clinometer0_x_n);
+		if(_clinometer0_y_n > 0) rdb["/user/clinometer/0/y"] = clinometerReadAverage(_clinometer0_y, _clinometer0_y_n);
+	}, 0, 500);
 }
 
 Composer::~Composer()

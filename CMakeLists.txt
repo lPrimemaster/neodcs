@@ -10,6 +10,12 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Add find modules to module path
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/modules/")
 
+option(LTRACE "Enable tracing." OFF)
+
+if(LTRACE)
+	add_definitions(-DLTRACE)
+endif()
+
 macro(generate_paris)
 	add_subdirectory(xpsrld4) 		# XPS-RLD4 engine control
 	add_subdirectory(eib7) 			# Encoder readout from EIB7
