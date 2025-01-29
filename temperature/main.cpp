@@ -58,8 +58,8 @@ Temperature::Temperature(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
 	{
 		log.info("Serial port connected.");
 
-		// Update temperature every half a second
-		deferExec(&Temperature::poll, 0, 500);
+		// Update temperature every second
+		deferExec(&Temperature::poll, 0, 1000);
 	}
 }
 

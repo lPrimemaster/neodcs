@@ -1,14 +1,11 @@
 #include "../common/daq.h"
-#include <span>
+#include "../types.h"
 
 class CIDaq : public mulex::MxBackend
 {
 public:
 	CIDaq(int argc, char* argv[]);
 	~CIDaq();
-
-	// Pass by value is important here. Do not modify
-	void dispatchChannelEvents(TaskHandle task, std::vector<double> data, std::uint64_t timestamp, uInt32 nchannels);
 
 	void pollCounter();
 
@@ -38,10 +35,14 @@ void CIDaq::pollCounter()
 	uInt32 inc = counts - last_counts;
 	if(inc > 0)
 	{
-		static std::vector<std::uint8_t> data(16); data.clear();
+		// static std::vector<std::uint8_t> data(16); data.clear();
+
+		CICountEvent e;
+		e.timestamp = timestamp;
+		e.counts = inc;
 
 		// Dispatch the number of counts this frame
-		dispatchEvent("cidaq::counts", mulex::MxEventBuilder(data).add(timestamp).add(inc));
+		dispatchEvent("cidaq::counts", e.serialize());
 		last_counts = counts;
 	}
 }
@@ -66,32 +67,6 @@ CIDaq::CIDaq(int argc, char* argv[]) : mulex::MxBackend(argc, argv), _daq(&log)
 CIDaq::~CIDaq()
 {
 	_daq.stopTask("dcs_counter");
-}
-
-static void CopyDoubleVectorToBytes(const std::span<double>& data, std::vector<uint8_t>& buffer, std::uint64_t offset)
-{
-	if(buffer.size() < data.size() * sizeof(double) + offset)
-	{
-		mulex::LogError("Buffer size too small to copy data.");
-		return;
-	}
-
-	std::memcpy(buffer.data() + offset, data.data(), data.size() * sizeof(double));
-}
-
-void CIDaq::dispatchChannelEvents(TaskHandle task, std::vector<double> data, std::uint64_t timestamp, uInt32 nchannels)
-{
-	static std::vector<std::uint8_t> buffer(sizeof(double) * NIDaq::SAMPLES_PER_CHANNEL + sizeof(std::uint64_t));
-
-	std::uint64_t start = 0;
-	for(const std::string& channel : _daq.getTaskChannels(task))
-	{
-		std::memcpy(buffer.data(), &timestamp, sizeof(std::uint64_t));
-		CopyDoubleVectorToBytes(std::span<double>(data.data() + start, NIDaq::SAMPLES_PER_CHANNEL), buffer, sizeof(std::uint64_t));
-		auto channel_alias = _daq.getChannelAlias(channel);
-		dispatchEvent("aidaq::" + channel_alias.value_or(channel), buffer);
-		start += NIDaq::SAMPLES_PER_CHANNEL;
-	}
 }
 
 int main(int argc, char* argv[])

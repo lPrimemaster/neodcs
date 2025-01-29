@@ -12,6 +12,10 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/modules/")
 
 option(LTRACE "Enable tracing." OFF)
 
+if(WIN32)
+	set(VCPKG_TARGET_TRIPLET "x64-mingw-dynamic" CACHE STRING "Vcpkg target triplet.")
+endif()
+
 if(LTRACE)
 	add_definitions(-DLTRACE)
 endif()
@@ -19,14 +23,15 @@ endif()
 macro(generate_paris)
 	add_subdirectory(xpsrld4) 		# XPS-RLD4 engine control
 	add_subdirectory(eib7) 			# Encoder readout from EIB7
-	add_subdirectory(nidaq_ci)  	# NI CI controler
+	add_subdirectory(nidaq_ci)  	# NI CI controller
 	add_subdirectory(temperature)	# Crystal temperature readout
+	add_subdirectory(composer_par)  # File writer / Online analysis
 endmacro()
 
 macro(generate_lisbon)
-	add_subdirectory(esp301)   # ESP301 engine control
-	add_subdirectory(nidaq_ai) # NI AI controler
-	add_subdirectory(composer) # File writer / Online analysis
+	add_subdirectory(esp301)   	   # ESP301 engine control
+	add_subdirectory(nidaq_ai) 	   # NI AI controller
+	add_subdirectory(composer_lis) # File writer / Online analysis
 endmacro()
 
 if(CMODE STREQUAL "")

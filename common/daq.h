@@ -25,10 +25,6 @@ struct NIError
 };
 NIError NIGetError(std::int32_t error);
 
-// Utilities
-std::vector<std::string> splitString(const std::string& str, char delim = ',');
-std::string trimString(const std::string& str, const std::string& whitespace = " \t");
-
 // NI DAQ Common
 std::uint32_t NIGetTaskNumChannels(TaskHandle task);
 

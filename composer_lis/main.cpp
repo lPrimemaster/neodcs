@@ -1,4 +1,4 @@
-//  Brief : Backend to gather all the events and analyze in realtime 
+//  Brief : Backend to gather all the events and analyze in realtime (tailored for Lisbon's DCS)
 // Author : César Godinho
 //   Date : 24/01/2025
 
@@ -127,23 +127,6 @@ Composer::Composer(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
 			// mulex::LogDebug("maw: %llu | w: %llu | h: %lf", _avg_window, _width_thr, _height_thr);
 		});
 	});
-
-	registerEvent("composer::dummy");
-	// deferExec([this]() {
-	// 	std::thread([this](){
-	// 		while(true)
-	// 		{
-	// 			static std::vector<std::uint8_t> buffer(10240000);
-	// 			dispatchEvent("composer::dummy", buffer);
-	// 			std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-	// 		}
-	//     }).detach();
-	// }, 1000);
-
-	deferExec([this](){
-		static std::vector<std::uint8_t> buffer(10240000);
-		dispatchEvent("composer::dummy", buffer);
-	}, 0, 1000);
 
 	rdb["/user/clinometer/0/x"].create(mulex::RdbValueType::FLOAT64, 0.0);
 	rdb["/user/clinometer/0/y"].create(mulex::RdbValueType::FLOAT64, 0.0);

@@ -1,5 +1,6 @@
 add_executable(aidaq
 	main.cpp
+	../common/utils.cpp
 	../common/daq.cpp
 )
 

@@ -1,7 +1,6 @@
 add_executable(cidaq
 	main.cpp
 	../common/daq.cpp
-	../common/utils.cpp
 )
 
 find_package(MxBackend REQUIRED)

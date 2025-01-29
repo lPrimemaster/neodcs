@@ -172,3 +172,23 @@ struct CountEvent : Serializable
 		ToValue(buffer, timestamp);
 	}
 };
+
+struct CICountEvent : Serializable
+{
+	std::int64_t  timestamp;
+	std::uint64_t counts;
+
+	inline virtual std::vector<std::uint8_t> serialize() const override
+	{
+		std::vector<std::uint8_t> buffer;
+		FromValue(buffer, timestamp);
+		FromValue(buffer, counts);
+		return buffer;
+	}
+
+	inline virtual void deserialize(std::vector<std::uint8_t>& buffer) override
+	{
+		ToValue(buffer, timestamp);
+		ToValue(buffer, counts);
+	}
+};

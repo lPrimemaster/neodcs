@@ -20,6 +20,7 @@
 #endif
 
 #include "../common/pid.h"
+#include "../common/utils.h"
 
 // Simple tiny job queue 
 class JobQueue
@@ -102,6 +103,7 @@ private:
 	void moveEngine(Engine engine, double pos);
 	bool checkEngineExtents(Engine engine, double pos);
 	void moveEnginePID(Engine engine, double pos, double tolerance);
+	double getEnginePosition(Engine engine);
 
 private:
 	std::string _ip;
@@ -127,6 +129,10 @@ Xpsrld4::Xpsrld4(int argc, char* argv[]) : mulex::MxBackend(argc, argv), _pid_jo
 	rdb["/user/xpsrld4/c2/setpoint"].create(mulex::RdbValueType::FLOAT64, 0.0f);
 	rdb["/user/xpsrld4/table/setpoint"].create(mulex::RdbValueType::FLOAT64, 0.0f);
 	rdb["/user/xpsrld4/detector/setpoint"].create(mulex::RdbValueType::FLOAT64, 0.0f);
+
+	// Table and detector get their position from the xpsrld4 controller
+	rdb["/user/xpsrld4/table/position"].create(mulex::RdbValueType::FLOAT64, 0.0f);
+	rdb["/user/xpsrld4/detector/position"].create(mulex::RdbValueType::FLOAT64, 0.0f);
 
 	// Set default PID values
 	rdb["/user/xpsrld4/c1/kp"].create(mulex::RdbValueType::FLOAT64, 0.0);
@@ -224,6 +230,13 @@ Xpsrld4::Xpsrld4(int argc, char* argv[]) : mulex::MxBackend(argc, argv), _pid_jo
 		double pos = value;
 		deferExec([this, pos](){ moveEngineAbsolute(Engine::TABLE, pos); });
 	});
+
+	// Not so critical, update every 500 ms
+	// Wait 1 second to start gathering
+	deferExec([this]() {
+		rdb["/user/xpsrld4/table/posiotion"] = getEnginePosition(Engine::TABLE);
+		rdb["/user/xpsrld4/detector/posiotion"] = getEnginePosition(Engine::DET);
+	}, 1000, 500);
 }
 
 Xpsrld4::~Xpsrld4()
@@ -400,6 +413,53 @@ void Xpsrld4::moveEnginePID(Engine engine, double pos, double tolerance)
 		read_pos = rdb["/user/eib7/axis/" + std::to_string(axis) + "/position"];
 		err = pid.getError(read_pos);
 	}
+}
+
+double Xpsrld4::getEnginePosition(Engine engine)
+{
+	std::string command;
+	switch(engine)
+	{
+		case Engine::C1:
+		case Engine::C2:
+		{
+			log.error("C1/C2 position is not retreivable from XPS-RLD4.");
+			break;
+		}
+		case Engine::DET:
+		{
+			command = "GroupPositionCurrentGet(" + _pos_detector + ", double*)";
+			break;
+		}
+		case Engine::TABLE:
+		{
+			command = "GroupPositionCurrentGet(" + _pos_table + ", double*)";
+			break;
+		}
+	}
+
+	std::string pos_str = writeCommand(command);
+	std::vector<std::string> res = splitString(pos_str);
+
+	if(res.size() < 1)
+	{
+		log.error("Unexpected response from XPS-RLD4.");
+		return 0.0;
+	}
+
+	if(std::stoi(res[0]) != 0)
+	{
+		log.error("Error fetching position for positioner. Command: %s.", command.c_str());
+		return 0.0;
+	}
+
+	if(res.size() < 2)
+	{
+		log.error("Unexpected response from XPS-RLD4.");
+		return 0.0;
+	}
+
+	return std::stod(res[1]);
 }
 
 int main(int argc, char* argv[])
