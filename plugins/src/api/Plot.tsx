@@ -10,6 +10,7 @@ interface MxPlotProps {
 	bands?: Array<uPlot.Band>;
 	cursor?: uPlot.Cursor;
 	class?: string;
+	dimensions?: Array<number>;
 };
 
 export const MxGenericPlot : Component<MxPlotProps> = (props) => {
@@ -28,6 +29,27 @@ export const MxGenericPlot : Component<MxPlotProps> = (props) => {
 	}
 
 	function _updateMaxExtents() : void {
+		if(props.dimensions) {
+			if(props.dimensions[0] > 0) {
+				setMaxWidth(props.dimensions[0]);
+			}
+			else if(container) {
+				setMaxWidth(container.getBoundingClientRect().width);
+			}
+
+			if(props.dimensions[1] > 0) {
+				setMaxHeight(props.dimensions[1]);
+			}
+			else if(container) {
+				setMaxHeight(container.getBoundingClientRect().height);
+			}
+
+			if(uplot) {
+				uplot.setSize({ width: maxWidth(), height: maxHeight() });
+			}
+			return;
+		}
+
 		if(container) {
 			setMaxWidth(container.getBoundingClientRect().width);
 			setMaxHeight(container.getBoundingClientRect().height);

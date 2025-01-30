@@ -9,22 +9,13 @@ export default defineConfig((_) => {
 		],
 		build: {
 			target: 'ESNext',
-			// lib: false,
 			lib: {
-				entry: './src/daq_waveforms.tsx',
+				entry: `./src/${process.argv[4].split('=')[1]}.tsx`,
 				formats: ['es'],
 				fileName: (_, name) => `${name}.js`
 			},
-			// rollupOptions: {
-			// 	input: {
-		 //  			daqWaveforms: './src/daq_waveforms.tsx',
-			// 	},
-			// 	output: {
-			// 	  	entryFileNames: '[name].js',
-			// 	  	format: 'es',
-			// 	},
-			// },
-			outDir: './dist'
+			outDir: './dist',
+			emptyOutDir: false
 		},
 		resolve: {
 			alias: {

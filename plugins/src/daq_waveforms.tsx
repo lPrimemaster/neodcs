@@ -6,16 +6,7 @@ import { MxGenericType } from './lib/convert';
 import { MxWebsocket } from './lib/websocket';
 import { MxValuePanel } from './api/ValuePanel';
 import { MxButton } from './api/Button';
-
-// Similar to the MxCard component
-const Card: Component<{title: string, children?: JSXElement}> = (props) => {
-     return (
-         <div class="bg-gray-100 p-5 mb-5 rounded-md shadow-md hover:shadow-lg" style="break-inside: avoid-column;">
-             <h1 class="text-md text-center font-medium">{props.title}</h1>
-             <div>{props.children}</div>
-         </div>
-     );
-};
+import { Card } from './common';
 
 const WaveformPlugin : Component = () => {
 	const [xdata, setXData] = createSignal<Array<number>>([]);
