@@ -15,21 +15,6 @@
 #include "../types.h"
 #include "../common/compressor.h"
 
-struct ComposerOutputList
-{
-	std::int64_t  soft_counts_timestamp;
-	std::uint64_t counts;
-
-	std::int64_t  soft_pos_timestamp;
-	double 		  c1_pos;
-	double 		  c2_pos;
-	double 		  table_pos;
-	double 		  det_pos;
-
-	double		  temp_c1;
-	double		  temp_c2;
-};
-
 class Composer : public mulex::MxBackend
 {
 public:
@@ -88,6 +73,8 @@ Composer::Composer(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
 
 	registerEvent("composer::counts");
 
+	registerEvent("composer::output");
+
 	registerRunStartStop(&Composer::startMeasurement, &Composer::stopMeasurement);
 }
 
@@ -132,6 +119,8 @@ ComposerOutputList Composer::createComposerOutputList(const CICountEvent& e)
 	list.table_pos = rdb["/user/xpsrld4/table/position"];
 	list.det_pos = rdb["/user/xpsrld4/detector/position"];
 
+	list.c2_moving = rdb["/user/xpsrld4/c2/moving"];
+
 	list.temp_c1 = rdb["/user/temperature/c1"];
 	list.temp_c2 = rdb["/user/temperature/c2"];
 
@@ -168,6 +157,7 @@ std::string Composer::listToOutputLine(const ComposerOutputList& list)
 	line += std::to_string(list.c2_pos) + ",";
 	line += std::to_string(list.table_pos) + ",";
 	line += std::to_string(list.det_pos) + ",";
+	line += std::to_string(list.c2_moving) + ",";
 	line += std::to_string(list.temp_c1) + ",";
 	line += std::to_string(list.temp_c2) + "\n";
 	return line;
@@ -235,7 +225,7 @@ void Composer::openOutputFile(std::uint64_t runno)
 		log.info("Saving list mode data under: %s.", output_file.c_str());
 
 		// Write the header
-		writeOutputLine("count_timestamp,counts,meta_timestamp,pos_c1,pos_c2,pos_table,pos_det,temp_c1,temp_c2\n");
+		writeOutputLine("count_timestamp,counts,meta_timestamp,pos_c1,pos_c2,pos_table,pos_det,c2_moving,temp_c1,temp_c2\n");
 	}
 }
 
@@ -277,6 +267,7 @@ void Composer::startMeasurement(std::uint64_t runno)
 
 	_file_writer_thread = std::thread([this, runno](){
 		openOutputFile(runno);
+		static std::vector<std::uint8_t> buffer(sizeof(ComposerOutputList));
 
 		while(true)
 		{
@@ -294,7 +285,12 @@ void Composer::startMeasurement(std::uint64_t runno)
 				std::unique_lock lock(_output_mtx);
 				for(const auto& count : counts)
 				{
-					cacheOutputLine(listToOutputLine(createComposerOutputList(count)));
+					const ComposerOutputList list = createComposerOutputList(count);
+					cacheOutputLine(listToOutputLine(list));
+
+					std::memcpy(buffer.data(), &list, sizeof(ComposerOutputList));
+
+					dispatchEvent("composer::output", buffer);
 				}
 			}
 

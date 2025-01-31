@@ -11,6 +11,7 @@
 #include <sstream>
 #include <string>
 #include <iomanip>
+#include <thread>
 #include <type_traits>
 
 #ifdef __linux__
@@ -104,6 +105,7 @@ private:
 	bool checkEngineExtents(Engine engine, double pos);
 	void moveEnginePID(Engine engine, double pos, double tolerance);
 	double getEnginePosition(Engine engine);
+	std::int32_t getEngineStatus(Engine engine);
 
 private:
 	std::string _ip;
@@ -171,6 +173,48 @@ Xpsrld4::Xpsrld4(int argc, char* argv[]) : mulex::MxBackend(argc, argv), _pid_jo
 	_pid.push_back(PidController(min, max, kp, kd, ki));
 	_pid.back().setBias(bias);
 
+	// Default moving status
+	rdb["/user/xpsrld4/c1/moving"].create(mulex::RdbValueType::BOOL, false);
+	rdb["/user/xpsrld4/c2/moving"].create(mulex::RdbValueType::BOOL, false);
+	rdb["/user/xpsrld4/table/moving"].create(mulex::RdbValueType::BOOL, false);
+	rdb["/user/xpsrld4/detector/moving"].create(mulex::RdbValueType::BOOL, false);
+
+	rdb["/user/xpsrld4/*/moving"].watch([this](const auto& key, const auto& value) {
+		bool moving = value;
+
+		static const std::map<std::string, Engine> engine_map = {
+			{ "c1"		, Engine::C1 	},
+			{ "c2"		, Engine::C2 	},
+			{ "table"	, Engine::TABLE },
+			{ "detector", Engine::DET 	}
+		};
+
+		if(moving)
+		{
+			std::string engine_str = splitString(key.c_str(), '/')[2];
+			Engine engine = engine_map.at(engine_str);
+			std::string kstring = key.c_str();
+
+			std::thread([this, engine, kstring]() {
+				std::int32_t status = getEngineStatus(engine);
+
+				if(status == -1)
+				{
+					log.error("Failed to poll engine status.");
+					return;
+				}
+
+				while(status == 44 || status == 43) // Moving or homing
+				{
+					status = getEngineStatus(engine);
+					std::this_thread::sleep_for(std::chrono::milliseconds(500));
+				}
+
+				rdb[kstring] = false;
+			}).detach();
+		}
+	});
+
 	// Default positioners
 	rdb["/user/xpsrld4/c1/positioner"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("C1.Pos"));
 	rdb["/user/xpsrld4/c2/positioner"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("C2.Pos"));
@@ -234,8 +278,8 @@ Xpsrld4::Xpsrld4(int argc, char* argv[]) : mulex::MxBackend(argc, argv), _pid_jo
 	// Not so critical, update every 500 ms
 	// Wait 1 second to start gathering
 	deferExec([this]() {
-		rdb["/user/xpsrld4/table/posiotion"] = getEnginePosition(Engine::TABLE);
-		rdb["/user/xpsrld4/detector/posiotion"] = getEnginePosition(Engine::DET);
+		rdb["/user/xpsrld4/table/position"] = getEnginePosition(Engine::TABLE);
+		rdb["/user/xpsrld4/detector/position"] = getEnginePosition(Engine::DET);
 	}, 1000, 500);
 }
 
@@ -345,11 +389,21 @@ void Xpsrld4::moveEngine(Engine engine, double pos)
 {
 	std::string command;
 
+	static const std::map<Engine, std::string> engine_rdb_map = {
+		{ Engine::C1	, "/user/xpsrld4/c1/moving" 	  },
+		{ Engine::C2	, "/user/xpsrld4/c2/moving" 	  },
+		{ Engine::TABLE , "/user/xpsrld4/table/moving" 	  },
+		{ Engine::DET	, "/user/xpsrld4/detector/moving" }
+	};
+
 	if(!checkEngineExtents(engine, pos))
 	{
 		log.error("Failed to increment engine %d to theoretical position %lf", static_cast<int>(engine), pos);
 		return;
 	}
+
+	// In motion
+	rdb[engine_rdb_map.at(engine)] = true;
 
 	switch(engine)
 	{
@@ -460,6 +514,57 @@ double Xpsrld4::getEnginePosition(Engine engine)
 	}
 
 	return std::stod(res[1]);
+}
+
+std::int32_t Xpsrld4::getEngineStatus(Engine engine)
+{
+	std::string command;
+	switch(engine)
+	{
+		case Engine::C1:
+		{
+			command = "GroupStatusGet(" + _pos_c1 + ", int*)";
+			break;
+		};
+		case Engine::C2:
+		{
+			command = "GroupStatusGet(" + _pos_c2 + ", int*)";
+			break;
+		};
+		case Engine::TABLE:
+		{
+			command = "GroupStatusGet(" + _pos_table + ", int*)";
+			break;
+		};
+		case Engine::DET:
+		{
+			command = "GroupStatusGet(" + _pos_detector + ", int*)";
+			break;
+		};
+	}
+
+	std::string res = writeCommand(command);
+	std::vector<std::string> status = splitString(res);
+
+	if(status.size() < 1)
+	{
+		log.error("Unexpected response from XPS-RLD4.");
+		return -1;
+	}
+
+	if(std::stoi(status[0]) != 0)
+	{
+		log.error("Error fetching status for positioner. Command: %s.", command.c_str());
+		return -1;
+	}
+
+	if(status.size() < 2)
+	{
+		log.error("Unexpected response from XPS-RLD4.");
+		return -1;
+	}
+
+	return std::stoi(status[1]);
 }
 
 int main(int argc, char* argv[])

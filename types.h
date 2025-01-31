@@ -192,3 +192,20 @@ struct CICountEvent : Serializable
 		ToValue(buffer, counts);
 	}
 };
+
+struct ComposerOutputList
+{
+	std::int64_t  soft_counts_timestamp;
+	std::uint64_t counts;
+
+	std::int64_t  soft_pos_timestamp;
+	double 		  c1_pos;
+	double 		  c2_pos;
+	bool		  c2_moving;
+	double 		  table_pos;
+	double 		  det_pos;
+
+	double		  temp_c1;
+	double		  temp_c2;
+};
+
