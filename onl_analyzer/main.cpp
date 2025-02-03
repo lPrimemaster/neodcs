@@ -2,6 +2,7 @@
 // Author : César Godinho
 //   Date : 31/01/2025
 
+#include <cstdint>
 #include <mutex>
 #include <mxbackend.h>
 #include <optional>
@@ -23,8 +24,14 @@ private:
 	std::mutex 					   _events_mtx;
 	std::condition_variable 	   _events_cv;
 
-	std::unique_ptr<std::thread>   _analyzer_thread;
-	std::atomic<bool>			   _analyzer_running;
+	std::unique_ptr<std::thread> _analyzer_thread;
+	std::atomic<bool>			 _analyzer_running;
+
+	std::mutex									  _output_mtx;
+	std::vector<std::pair<double, std::uint64_t>> _output_increments;
+	std::atomic<double>							  _output_start;
+	std::atomic<double>							  _output_stop;
+	std::atomic<double>							  _output_inc;
 };
 
 void Analyzer::addEvent(const ComposerOutputList& evt)
@@ -54,10 +61,37 @@ std::optional<ComposerOutputList> Analyzer::fetchEvent()
 
 void Analyzer::analyze(const ComposerOutputList& evt)
 {
+	std::unique_lock lock(_output_mtx);
+	_output_increments.push_back({ evt.c2_pos, evt.counts });
 }
 
 Analyzer::Analyzer(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
 {
+	rdb["/user/analyzer/update_interval"].create(mulex::RdbValueType::UINT64, std::uint64_t(1000)); // Update histogram every second
+	std::uint64_t interval = rdb["/user/analyzer/update_interval"];
+	
+	registerEvent("analyzer::output");
+
+	deferExec([this]() {
+		static std::vector<std::uint8_t> buffer;
+		{
+			std::unique_lock lock(_output_mtx);
+			if(_output_increments.empty()) return;
+
+			buffer.resize((sizeof(double) + sizeof(std::uint64_t)) * _output_increments.size());
+
+			std::uint8_t* ptr = buffer.data();
+			for(const auto& pair : _output_increments)
+			{
+				std::memcpy(ptr, &pair.first , sizeof(double));		   ptr += sizeof(double);
+				std::memcpy(ptr, &pair.second, sizeof(std::uint64_t)); ptr += sizeof(std::uint64_t);
+			}
+
+			_output_increments.clear();
+		}
+		dispatchEvent("analyzer::output", buffer);
+	}, 0, static_cast<std::int64_t>(interval));
+
 	subscribeEvent("composer::output", [this](const auto* data, auto len, const auto* udata) {
 		ComposerOutputList list;
 		std::memcpy(&list, data, sizeof(ComposerOutputList));
