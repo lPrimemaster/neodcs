@@ -73,18 +73,18 @@ const PositonControlPlugin : Component = () => {
 	}
 
 	onMount(() => {
-		rdb.read('/user/eib7/axis/0/position').then((value: number) => { setC1Position(value); addHistoryPos1(value); });
-		rdb.read('/user/eib7/axis/1/position').then((value: number) => { setC2Position(value); addHistoryPos2(value); });
+		rdb.read('/user/eib7/axis/1/position').then((value: number) => { setC1Position(value); addHistoryPos1(value); });
+		rdb.read('/user/eib7/axis/3/position').then((value: number) => { setC2Position(value); addHistoryPos2(value); });
 		rdb.read('/user/xpsrld4/table/position').then((value: number) => { setTablePosition(value); addHistoryPosTable(value); });
 		rdb.read('/user/xpsrld4/detector/position').then((value: number) => { setDetectorPosition(value); addHistoryPosDetector(value); });
 
-		rdb.watch('/user/eib7/axis/0/position', (_: string, value: MxGenericType) => {
+		rdb.watch('/user/eib7/axis/1/position', (_: string, value: MxGenericType) => {
 			const pos = value.astype('float64');
 			setC1Position(pos);
 			addHistoryPos1(pos);
 		});
 
-		rdb.watch('/user/eib7/axis/1/position', (_: string, value: MxGenericType) => {
+		rdb.watch('/user/eib7/axis/3/position', (_: string, value: MxGenericType) => {
 			const pos = value.astype('float64');
 			setC2Position(pos);
 			addHistoryPos2(pos);
@@ -95,7 +95,7 @@ const PositonControlPlugin : Component = () => {
 			setTablePosition(pos);
 			addHistoryPosTable(pos);
 		});
-		rdb.watch('/user/eib7/axis/1/position', (_: string, value: MxGenericType) => {
+		rdb.watch('/user/xpsrld4/detector/position', (_: string, value: MxGenericType) => {
 			const pos = value.astype('float64');
 			setDetectorPosition(pos);
 			addHistoryPosDetector(pos);

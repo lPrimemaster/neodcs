@@ -6,7 +6,8 @@
 		"build-daqwave": "vite build -- --target=daq_waveforms",
 		"build-poscont": "vite build -- --target=position_control",
 		"build-tempcont": "vite build -- --target=temp_control",
-		"build-all": "yarn build-daqwave && yarn build-poscont && yarn build-tempcont"
+		"build-dcshisto": "vite build -- --target=dcs_histo",
+		"build-all": "yarn build-daqwave && yarn build-poscont && yarn build-tempcont && yarn build-dcshisto"
 	},
 	"license": "MIT",
 	"devDependencies": {

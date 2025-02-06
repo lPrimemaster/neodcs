@@ -62,6 +62,7 @@ std::optional<ComposerOutputList> Analyzer::fetchEvent()
 void Analyzer::analyze(const ComposerOutputList& evt)
 {
 	std::unique_lock lock(_output_mtx);
+	log.info("Analyze: %lf, %llu", evt.c2_pos, evt.counts);
 	_output_increments.push_back({ evt.c2_pos, evt.counts });
 }
 
@@ -72,46 +73,52 @@ Analyzer::Analyzer(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
 	
 	registerEvent("analyzer::output");
 
-	deferExec([this]() {
-		static std::vector<std::uint8_t> buffer;
-		{
-			std::unique_lock lock(_output_mtx);
-			if(_output_increments.empty()) return;
+	// deferExec([this]() {
+	// 	static std::vector<std::uint8_t> buffer;
+	// 	{
+	// 		std::unique_lock lock(_output_mtx);
+	// 		if(_output_increments.empty()) return;
 
-			buffer.resize((sizeof(double) + sizeof(std::uint64_t)) * _output_increments.size());
+	// 		buffer.resize((sizeof(double) + sizeof(std::uint64_t)) * _output_increments.size());
 
-			std::uint8_t* ptr = buffer.data();
-			for(const auto& pair : _output_increments)
-			{
-				std::memcpy(ptr, &pair.first , sizeof(double));		   ptr += sizeof(double);
-				std::memcpy(ptr, &pair.second, sizeof(std::uint64_t)); ptr += sizeof(std::uint64_t);
-			}
+	// 		std::uint8_t* ptr = buffer.data();
+	// 		for(const auto& pair : _output_increments)
+	// 		{
+	// 			std::memcpy(ptr, &pair.first , sizeof(double));		   ptr += sizeof(double);
+	// 			std::memcpy(ptr, &pair.second, sizeof(std::uint64_t)); ptr += sizeof(std::uint64_t);
+	// 			log.info("pf: %lf, ps: %llu", pair.first, pair.second);
+	// 		}
 
-			_output_increments.clear();
-		}
-		dispatchEvent("analyzer::output", buffer);
-	}, 0, static_cast<std::int64_t>(interval));
+	// 		_output_increments.clear();
+	// 	}
+	// 	dispatchEvent("analyzer::output", buffer);
+	// }, 0, static_cast<std::int64_t>(interval));
 
 	subscribeEvent("composer::output", [this](const auto* data, auto len, const auto* udata) {
 		ComposerOutputList list;
+		static std::vector<std::uint8_t> buffer(sizeof(double) + sizeof(std::uint64_t));
 		std::memcpy(&list, data, sizeof(ComposerOutputList));
-		addEvent(list);
+		std::memcpy(buffer.data(), &list.c2_pos, sizeof(double));
+		std::memcpy(buffer.data() + sizeof(double), &list.counts, sizeof(std::uint64_t));
+		dispatchEvent("analyzer::output", buffer);
+		// log.info("Add: %lf, %llu", list.c2_pos, list.counts);
+		//addEvent(list);
 	});
 
-	_analyzer_running.store(true);
-	_analyzer_thread = std::make_unique<std::thread>([this]() {
-		while(_analyzer_running.load())
-		{
-			const std::optional<ComposerOutputList> list = fetchEvent();
+	// _analyzer_running.store(true);
+	// _analyzer_thread = std::make_unique<std::thread>([this]() {
+	// 	while(_analyzer_running.load())
+	// 	{
+	// 		const std::optional<ComposerOutputList> list = fetchEvent();
 			
-			if(!list.has_value())
-			{
-				break;
-			}
+	// 		if(!list.has_value())
+	// 		{
+	// 			break;
+	// 		}
 
-			analyze(list.value());
-		}
-	});
+	// 		analyze(list.value());
+	// 	}
+	// });
 }
 
 Analyzer::~Analyzer()

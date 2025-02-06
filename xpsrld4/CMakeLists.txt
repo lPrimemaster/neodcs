@@ -1,5 +1,7 @@
 add_executable(xpsrld4
 	main.cpp
+	../common/utils.cpp
+	../common/pid.cpp
 )
 
 find_package(MxBackend REQUIRED)

@@ -114,15 +114,17 @@ ComposerOutputList Composer::createComposerOutputList(const CICountEvent& e)
 	list.counts = e.counts;
 
 	list.soft_pos_timestamp = mulex::SysGetCurrentTime();
-	list.c1_pos = rdb["/user/eib7/axis/0/position"];
-	list.c2_pos = rdb["/user/eib7/axis/1/position"];
+	list.c1_pos = rdb["/user/eib7/axis/1/position"];
+	list.c2_pos = rdb["/user/eib7/axis/3/position"];
 	list.table_pos = rdb["/user/xpsrld4/table/position"];
 	list.det_pos = rdb["/user/xpsrld4/detector/position"];
 
 	list.c2_moving = rdb["/user/xpsrld4/c2/moving"];
 
-	list.temp_c1 = rdb["/user/temperature/c1"];
-	list.temp_c2 = rdb["/user/temperature/c2"];
+	list.temp_c1 = static_cast<float>(rdb["/user/temperature/c1"]);
+	list.temp_c2 = static_cast<float>(rdb["/user/temperature/c2"]);
+
+	mulex::LogTrace("LO: %lf, %lf, %lf, %d", list.c1_pos, list.c2_pos, list.temp_c1, list.counts);
 
 	return list;
 }
@@ -282,7 +284,6 @@ void Composer::startMeasurement(std::uint64_t runno)
 
 			// I.e. populate ComposerOutputList and write a file
 			{
-				std::unique_lock lock(_output_mtx);
 				for(const auto& count : counts)
 				{
 					const ComposerOutputList list = createComposerOutputList(count);

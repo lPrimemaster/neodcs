@@ -61,37 +61,44 @@ Eib7::Eib7(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
 	rdb["/user/eib7/calib_mode"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("manual")); // manual or auto
 
 	rdb["/user/eib7/ip"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("10.80.0.99"));
-	_hostname = mulex::mxstring<512>(rdb["/user/eib7/hostname"]).c_str();
+	_hostname = mulex::mxstring<512>(rdb["/user/eib7/ip"]).c_str();
 
 	// rdb["/user/eib7/poll_sleep"].create(mulex::RdbValueType::UINT32, std::uint32_t(100));
 	// _poll_sleep = rdb["/user/eib7/poll_sleep"];
 
-	std::uint32_t ip;
-	std::uint32_t naxes;
+	long unsigned int ip;
+	long unsigned int naxes;
 	char fw_version[20];
 
-	checkError(EIB7GetHostIP(_hostname, &ip));
-	checkError(EIB7Open(ip, &_handle, EIB_TCP_TIMEOUT, fw_version, sizeof(fw_version)));
+	checkError(EIB7GetHostIP(_hostname.c_str(), &ip));
+	checkError(EIB7Open(ip, &_handle, 10000, fw_version, sizeof(fw_version)));
+
+	// disable trigger
+    checkError(EIB7GlobalTriggerEnable(_handle, EIB7_MD_Disable, EIB7_TS_All));
+
+    // disable SoftRealtime mode
+    checkError(EIB7SelectMode(_handle, EIB7_OM_Polling));
+
 	checkError(EIB7GetAxis(_handle, _axis, NUM_AXES, &naxes));
 
-	std::uint32_t timestampTicks;
+	long unsigned int timestampTicks;
     checkError(EIB7GetTimestampTicks(_handle, &timestampTicks));
-	std::uint32_t timestampPeriod = TIMESTAMP_PERIOD * timestampTicks;
+	long unsigned int timestampPeriod = TIMESTAMP_PERIOD * timestampTicks;
     checkError(EIB7SetTimestampPeriod(_handle, timestampPeriod));
 
 	EIB7_DataPacketSection packet[5];
 	checkError(EIB7AddDataPacketSection(packet, 0, EIB7_DR_Global, EIB7_PDF_TriggerCounter));
 
 	// enable internal trigger (for now)
-	std::uint32_t timerTicks;
+	long unsigned int timerTicks;
     checkError(EIB7GetTimerTriggerTicks(_handle, &timerTicks));
-	std::uint32_t timerPeriod = TRIGGER_PERIOD * timerTicks;
+	long unsigned int timerPeriod = TRIGGER_PERIOD * timerTicks;
     checkError(EIB7SetTimerTriggerPeriod(_handle, timerPeriod));
     checkError(EIB7MasterTriggerSource(_handle, EIB7_AT_TrgTimer));
 
-	rdb["/user/eib7/axis/0/enabled"].create(mulex::RdbValueType::BOOL, true);
+	rdb["/user/eib7/axis/0/enabled"].create(mulex::RdbValueType::BOOL, false);
 	rdb["/user/eib7/axis/1/enabled"].create(mulex::RdbValueType::BOOL, true);
-	rdb["/user/eib7/axis/2/enabled"].create(mulex::RdbValueType::BOOL, true);
+	rdb["/user/eib7/axis/2/enabled"].create(mulex::RdbValueType::BOOL, false);
 	rdb["/user/eib7/axis/3/enabled"].create(mulex::RdbValueType::BOOL, true);
 
 	rdb["/user/eib7/axis/0/refmarks"].create(mulex::RdbValueType::UINT8, std::uint8_t(1));
@@ -142,7 +149,9 @@ Eib7::Eib7(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
     // enable SoftRealtime mode
     checkError(EIB7SelectMode(_handle, EIB7_OM_SoftRealtime));
 
-	calibrateRefs();
+	checkError(EIB7GlobalTriggerEnable(_handle, EIB7_MD_Enable, EIB7_TS_TrgTimer));
+
+	// calibrateRefs();
 
 	_poll_stop.store(false);
 	_poll_thread = std::make_unique<std::thread>(&Eib7::poll, this);
@@ -166,11 +175,12 @@ void Eib7::poll()
 	while(!_poll_stop.load())
 	{
 		std::uint8_t  udp_data[200];
-		std::uint32_t entries;
+		long unsigned int entries;
 		void* 		  field;
-		std::uint32_t sz;
-		EncoderAxisData eadata;
-		EncoderData edata;
+		long unsigned int sz;
+		// EncoderAxisData eadata;
+		std::int64_t position[NUM_AXES];
+		double calcposition[NUM_AXES];
 
 		// Read FIFO with UDP
 		EIB7_ERR error = EIB7ReadFIFOData(_handle, udp_data, 1, &entries, 0);
@@ -181,39 +191,37 @@ void Eib7::poll()
 		}
 		if(entries > 0)
 		{
-			edata.numAxis = 0;
 			for(std::int32_t i = 0; i < static_cast<std::int32_t>(NUM_AXES); i++)
 			{
 				if(!enabled[i]) continue;
 
-				edata.numAxis++;
 				// read trigger counter
-				checkError(EIB7GetDataFieldPtr(eib, udp_data, 
+				checkError(EIB7GetDataFieldPtr(_handle, udp_data, 
 							EIB7_DR_Global, 
 							EIB7_PDF_TriggerCounter, 
 							&field, &sz));
-				eadata.triggerCounter = *(u16*)field;
+				// eadata.triggerCounter = *(u16*)field;
 
 				// read timestamp
 				checkError(EIB7GetDataFieldPtr(_handle, udp_data, 
 							_regions[i], 
 							EIB7_PDF_Timestamp, 
 							&field, &sz));
-				eadata.timestamp = *(u16*)field;
+				// eadata.timestamp = *(u16*)field;
 
 				// read position
 				checkError(EIB7GetDataFieldPtr(_handle, udp_data, 
 							_regions[i], 
 							EIB7_PDF_PositionData, 
 							&field, &sz));
-				eadata.position = *(i64*)field;
+				position[i] = *(std::int64_t*)field;
 
 				// read status
 				checkError(EIB7GetDataFieldPtr(_handle, udp_data, 
 							_regions[i], 
 							EIB7_PDF_StatusWord, 
 							&field, &sz));
-				eadata.status = *(u16*)field;
+				// eadata.status = *(u16*)field;
 
 				// read ref
 				checkError(EIB7GetDataFieldPtr(_handle, udp_data, 
@@ -221,19 +229,17 @@ void Eib7::poll()
 							EIB7_PDF_ReferencePos,
 							&field, &sz));
 				std::int64_t* posVal = (std::int64_t*)field;
-				eadata.ref[0] = posVal[0];
-				eadata.ref[1] = posVal[1];
+				std::int64_t ref0 = posVal[0];
+				// std::int64_t ref1 = posVal[1];
 
-				eadata.position -= eadata.ref[0]; // HACK: (Cesar) One reference mark only
-				checkError(EIB7IncrPosToDouble(eadata.position, &eadata.calpos));
-				eadata.calpos *= 360.0 / sigperiods[i];
+				position[i] -= ref0; // HACK: (Cesar) One reference mark only
+				checkError(EIB7IncrPosToDouble(position[i], &calcposition[i]));
+				calcposition[i] *= 360.0 / sigperiods[i];
 
-				eadata.axis = (std::int8_t)i + 1;
-
-				edata.axis[i] = eadata;
-
+				// log.info("%d: %lf", i, calcposition[i]);
+				std::this_thread::sleep_for(std::chrono::microseconds(50));
 				// Try RDB
-				rdb[pos_keys[i]] = edata.axis[i].calpos;
+				rdb[pos_keys[i]] = calcposition[i];
 			}   
 
 			// std::this_thread::sleep_for(std::chrono::milliseconds(_poll_sleep));
@@ -241,7 +247,7 @@ void Eib7::poll()
 		else
 		{
 			// Sleep until atleast next trigger
-			static constexpr i64 spleeptime = TRIGGER_PERIOD / 10;
+			static constexpr std::int64_t spleeptime = TRIGGER_PERIOD / 10;
 			std::this_thread::sleep_for(std::chrono::microseconds(spleeptime));
 		}
 	}
@@ -300,9 +306,9 @@ void Eib7::calibrateRefs()
 	}
 
 	std::uint8_t  udp_data[200];
-	std::uint32_t entries;
+	long unsigned int entries;
 	void* 		  field;
-	std::uint32_t sz;
+	long unsigned int sz;
 	std::uint32_t got_ref = 0;
 	bool 		  referencing[NUM_AXES] = { true, true, true, true };
 
@@ -323,6 +329,15 @@ void Eib7::calibrateRefs()
 		}
 	}
 
+	bool enabled[NUM_AXES];
+	double sigperiods[NUM_AXES];
+
+	for(std::int32_t i = 0; i < static_cast<std::int32_t>(NUM_AXES); i++)
+	{
+		enabled[i] = rdb["/user/eib7/axis/" + std::to_string(i) + "/enabled"];
+		sigperiods[i] = rdb["/user/eib7/axis/" + std::to_string(i) + "/sigperiods"];
+	}
+
 	while(got_ref < nactive_axes)
 	{
 		EIB7_ERR error = EIB7ReadFIFOData(_handle, udp_data, 1, &entries, 0);
@@ -336,6 +351,8 @@ void Eib7::calibrateRefs()
 		{
 			for(std::uint32_t i = 0; i < static_cast<std::uint32_t>(NUM_AXES); i++)
 			{
+				if(!enabled[i]) continue;
+
 				checkError(EIB7GetDataFieldPtr(_handle,
 					udp_data,
 					_regions[i],
@@ -343,8 +360,24 @@ void Eib7::calibrateRefs()
 					&field,
 					&sz
 				));
-
 				unsigned short status = *(unsigned short *)field;
+				
+				checkError(EIB7GetDataFieldPtr(_handle,
+					udp_data, 
+					_regions[i], 
+					EIB7_PDF_PositionData, 
+					&field,
+					&sz
+				));
+				double cpos;
+				checkError(EIB7IncrPosToDouble(*(std::int64_t*)field, &cpos));
+				cpos *= 360.0 / sigperiods[i];
+
+				if(referencing[i])
+				{
+					mulex::LogDebug("Pos X1%d: %.3lf", i + 1, cpos);
+				}
+
 				if((status & (1 << 8)))
 				{
 					if(referencing[i])
@@ -359,8 +392,8 @@ void Eib7::calibrateRefs()
 						ENCODER_POSITION ref = *(ENCODER_POSITION *)field;
 						log.info("Encoder %d (X1%d) head referenced. [ref: %lld]", i, i + 1, ref);
 						referencing[i] = false;
+						got_ref++;
 					}
-					got_ref++;
 				}
 			}
 		}

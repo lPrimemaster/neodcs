@@ -49,6 +49,8 @@ double PidController::correct(double value, double dt)
 	double d = _kd * ((_err - _lerr) / _dt);
 	_lerr = _err;
 
+	std::cout << p << " " << _kp << " " << _err << std::endl;
+
 	return std::clamp(p + i + d + _bias, _min, _max);
 }
 

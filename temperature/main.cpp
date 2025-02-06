@@ -18,13 +18,15 @@ public:
 	Temperature(int argc, char* argv[]);
 	~Temperature();
 
-	float readTemperature(std::uint8_t addr);
+	float readTemperature(std::uint8_t addr, const mulex::DrvSerial& handle);
 	void poll();
 
 private:
 	mulex::DrvSerialArgs _serial_args;
-	mulex::DrvSerial 	 _handle;
-	std::string 		 _port;
+	mulex::DrvSerial 	 _handle_c1;
+	mulex::DrvSerial 	 _handle_c2;
+	std::string 		 _port1;
+	std::string 		 _port2;
 };
 
 Temperature::Temperature(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
@@ -35,8 +37,13 @@ Temperature::Temperature(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
 	rdb["/user/temperature/c2"].create(mulex::RdbValueType::FLOAT32, 0.0f); // in C
 	//
 	// Default com port
-	rdb["/user/jumo/port"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("COM1"));
-	_port = std::string(static_cast<mulex::mxstring<512>>(rdb["/user/jumo/port"]).c_str());
+	rdb["/user/jumo/port1"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("COM3"));
+	rdb["/user/jumo/port1"] = mulex::mxstring<512>("COM3");
+	rdb["/user/jumo/port2"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("COM4"));
+	rdb["/user/jumo/port2"] = mulex::mxstring<512>("COM4");
+	
+	_port1 = std::string(static_cast<mulex::mxstring<512>>(rdb["/user/jumo/port1"]).c_str());
+	_port2 = std::string(static_cast<mulex::mxstring<512>>(rdb["/user/jumo/port2"]).c_str());
 
 	// Baud rates and family could be fixed
 	_serial_args.baud = 9600;
@@ -49,26 +56,49 @@ Temperature::Temperature(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
 	_serial_args.blocking = true;
 
 	// Open the serial port
-	_handle = mulex::DrvSerialInit(_port, _serial_args);
-	if(_handle._error)
+	_handle_c1 = mulex::DrvSerialInit(_port1, _serial_args);
+	if(_handle_c1._error)
 	{
-		log.error("Failed to initialize device serial handle at port %s.", _port.c_str());
+		log.error("Failed to initialize device serial handle at port %s.", _port1.c_str());
 	}
 	else
 	{
 		log.info("Serial port connected.");
 
-		// Update temperature every second
-		deferExec(&Temperature::poll, 0, 1000);
+		// // Update temperature every second
+		// deferExec(&Temperature::poll, 0, 1000);
 	}
+
+	// Open the serial port
+	_handle_c2 = mulex::DrvSerialInit(_port2, _serial_args);
+	if(_handle_c2._error)
+	{
+		log.error("Failed to initialize device serial handle at port %s.", _port2.c_str());
+	}
+	else
+	{
+		log.info("Serial port connected.");
+
+		// // Update temperature every second
+		// deferExec(&Temperature::poll, 0, 1000);
+	}
+
+	// Update temperature every second
+	deferExec(&Temperature::poll, 0, 1000);
 }
 
 Temperature::~Temperature()
 {
-	if(!_handle._error)
+	if(!_handle_c1._error)
 	{
 		log.info("Closing serial port.");
-		mulex::DrvSerialClose(_handle);
+		mulex::DrvSerialClose(_handle_c1);
+	}
+
+	if(!_handle_c2._error)
+	{
+		log.info("Closing serial port.");
+		mulex::DrvSerialClose(_handle_c2);
 	}
 }
 
@@ -123,7 +153,7 @@ static std::uint16_t CalculateCRC16(const std::uint8_t* ptr, std::uint64_t size)
 	return crc;
 }
 
-float Temperature::readTemperature(std::uint8_t addr)
+float Temperature::readTemperature(std::uint8_t addr, const mulex::DrvSerial& handle)
 {
 	// According to the temperature controller's (JUMO 400) specification
 	std::uint8_t buffer[256];
@@ -138,13 +168,16 @@ float Temperature::readTemperature(std::uint8_t addr)
     memcpy(&buffer[6], &crc, sizeof(std::uint16_t)); // size == 2
 
     // Total size is 8 at this point
-	mulex::DrvSerialWrite(_handle, buffer, 8);
+	mulex::DrvSerialWrite(handle, buffer, 8);
 
     // Wait for reply
-	std::uint64_t read_size;
-	mulex::DrvSerialRead(_handle, buffer, 256, &read_size);
-    // DCS::u64 data_size = buffer[2] + 2; // +2 is from the CRC16 appended to the reply
-    const std::uint8_t* data = &buffer[3];
+	DWORD emask = 0;
+	BOOL status = ::SetCommMask(handle._handle, EV_RXCHAR);
+	status = ::WaitCommEvent(handle._handle, &emask, NULL);
+	DWORD read_size;
+	::ReadFile(handle._handle, buffer, 3, &read_size, NULL);
+	::ReadFile(handle._handle, buffer, 2 + buffer[2], &read_size, NULL);
+    const std::uint8_t* data = &buffer[read_size == 9 ? 3 : 0];
     
     // MLE -> LE conversion
 	std::uint8_t output[sizeof(float)];
@@ -160,8 +193,10 @@ float Temperature::readTemperature(std::uint8_t addr)
 
 void Temperature::poll()
 {
-	rdb["/user/temperature/c1"] = readTemperature(0x01); // c1's temperature
-	rdb["/user/temperature/c2"] = readTemperature(0x02); // c2's temperature
+	float t1 = readTemperature(0x01, _handle_c1);
+	float t2 = readTemperature(0x02, _handle_c2);
+	rdb["/user/temperature/c1"] = t1; // c1's temperature
+	rdb["/user/temperature/c2"] = t2; // c2's temperature
 }
 
 int main(int argc, char* argv[])

@@ -5,7 +5,6 @@ import { MxGenericPlot } from './api/Plot';
 import { MxRdb } from './lib/rdb';
 
 const TemperaturePlugin : Component = () => {
-
 	const [c1Temp, setC1Temp] = createSignal<number>(0);
 	const [c2Temp, setC2Temp] = createSignal<number>(0);
 	const [x, setX] = createSignal<Array<number>>([]);
@@ -32,20 +31,14 @@ const TemperaturePlugin : Component = () => {
 		appendPlot(ts, tc1, tc2);
 	}
 
-	onMount(() => {
-		// Update only once per second on this page
-		const int = setInterval(() => fetchNewTemperatures, 1000);
-
-		onCleanup(() => {
-			clearInterval(int);
-		});
-	});
+	// Update only once per second on this page
+	setInterval(() => fetchNewTemperatures(), 1000);
 
 	return (
 		<Card title="Temperature Monitor">
 			<div class="flex gap-5 place-content-center">
-				<MxValuePanel title="C1 Temperature" size="xlarge" value={c1Temp().toFixed(1)} reactive/>
-				<MxValuePanel title="C2 Temperature" size="xlarge" value={c2Temp().toFixed(1)} reactive/>
+				<MxValuePanel title="C1 Temperature" size="xlarge" value={c1Temp().toFixed(2)} reactive/>
+				<MxValuePanel title="C2 Temperature" size="xlarge" value={c2Temp().toFixed(2)} reactive/>
 			</div>
 			<MxGenericPlot
 				series={[{}, { label: 'C1 Temperature', stroke: 'blue' }, { label: 'C2 Temperature', stroke: 'red' }]}

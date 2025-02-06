@@ -41,6 +41,8 @@ void CIDaq::pollCounter()
 		e.timestamp = timestamp;
 		e.counts = inc;
 
+		// log.info("Poll source PFI39: %d", inc);
+
 		// Dispatch the number of counts this frame
 		dispatchEvent("cidaq::counts", e.serialize());
 		last_counts = counts;

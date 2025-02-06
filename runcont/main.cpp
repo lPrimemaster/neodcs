@@ -48,10 +48,12 @@ private:
 	RunContMode   				 _mode;
 	RunContStatus 				 _status = RunContStatus::STOPPED;
 	std::unique_ptr<std::thread> _measurement_thread;
+	std::mutex 					 _status_mtx;
 };
 
 void RunCont::setRunStatus(const RunContStatus& status)
 {
+	std::unique_lock lock(_status_mtx);
 	_status = status;
 	rdb["/user/runcont/status"] = static_cast<std::int32_t>(_status);
 }
@@ -81,21 +83,23 @@ RunCont::RunCont(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
 
 bool RunCont::setupStart()
 {
-	double c1pos = rdb["/user/runcon/c1/position"];
-	double c2pos = rdb["/user/runcon/c2/start"];
-	double tapos = rdb["/user/runcon/table/position"];
+	double c1pos = rdb["/user/runcont/c1/position"];
+	double c2pos = rdb["/user/runcont/c2/start"];
+	double tapos = rdb["/user/runcont/table/position"];
 
 	// TODO: (Cesar) Calculate detector start pos
+
+	log.info("Setup start. C1 = %.3lf, C2 = %.3lf, Table = %.3lf", c1pos, c2pos, tapos);
 
 	rdb["/user/xpsrld4/c1/setpoint"] = c1pos;
 	rdb["/user/xpsrld4/c2/setpoint"] = c2pos;
 	rdb["/user/xpsrld4/table/setpoint"] = tapos;
 
-	constexpr std::int32_t timeout = 60000; // 2 minutes timeout
+	constexpr std::int64_t timeout = 60000; // 2 minutes timeout
 
 	// Wait for position to be within the setpoint
 	log.info("Waiting for motion to complete...");
-	std::int32_t tp = mulex::SysGetCurrentTime();
+	std::int64_t tp = mulex::SysGetCurrentTime();
 
 	while(true)
 	{
@@ -106,7 +110,10 @@ bool RunCont::setupStart()
 
 		if(!c1moving && !c2moving && !tablemoving && !detmoving)
 		{
-			break;
+			if(checkEnginesStartPositions())
+			{
+				break;
+			}
 		}
 
 		if((mulex::SysGetCurrentTime() - tp) > timeout)
@@ -132,7 +139,7 @@ void RunCont::measureAnti()
 	double inc = rdb["/user/runcont/c2/increment"];
 	std::uint64_t tpb = rdb["/user/runcont/c2/tpb"];
 
-	log.info("Current increment: %.3lf mdeg.", inc / 1000.0);
+	log.info("Current increment: %.3lf mdeg.", inc * 1000.0);
 	log.info("Current tpb: %llu s.", tpb);
 
 	std::uint32_t nbins = static_cast<std::uint32_t>((stop - start) / inc);
@@ -144,6 +151,11 @@ void RunCont::measureAnti()
 
 	// TODO: (Cesar) Adjust C1 if need be during the measurement
 
+	if(_measurement_thread)
+	{
+		_measurement_thread->join();
+		_measurement_thread.reset();
+	}
 	_measurement_thread = std::make_unique<std::thread>([this, nbins, inc, tpb, start](){
 		double setpoint = start;
 		log.info("Measurement started.");
@@ -152,7 +164,7 @@ void RunCont::measureAnti()
 			log.info("Current Bin: %u/%u.", i, nbins);
 			// NOTE: (Cesar) sleep_for does not assure a super fine wait
 			// 				 but should be more than enough for this task
-			std::this_thread::sleep_for(std::chrono::milliseconds(tpb));
+			std::this_thread::sleep_for(std::chrono::seconds(tpb));
 
 			// Move to next
 			setpoint += inc;
@@ -161,6 +173,14 @@ void RunCont::measureAnti()
 			// 				 The composer logs this on the listmode output.
 			// 				 Here we also assume the drift is negligible
 			// 				 comparing to the bin time.
+
+			{
+				std::unique_lock lock(_status_mtx);
+				if(_status != RunContStatus::RUNNING)
+				{
+					break;
+				}
+			}
 		}
 		log.info("Measurement stopped.");
 
@@ -219,8 +239,8 @@ bool RunCont::checkEnginesStartPositions()
 	double spc2 = rdb["/user/runcont/c2/start"];
 	double spta = rdb["/user/runcont/table/position"];
 
-	double pc1 = rdb["/user/eib7/axis/0/position"];
-	double pc2 = rdb["/user/eib7/axis/1/position"];
+	double pc1 = rdb["/user/eib7/axis/1/position"];
+	double pc2 = rdb["/user/eib7/axis/3/position"];
 	double pta = rdb["/user/xpsrld4/table/position"];
 	
 	double ec1 = std::abs(spc1 - pc1);
@@ -260,6 +280,13 @@ void RunCont::stopMeasurement(std::uint64_t runno)
 
 RunCont::~RunCont()
 {
+	stopMeasurement(0);
+
+	if(_measurement_thread)
+	{
+		_measurement_thread->join();
+		_measurement_thread.reset();
+	}
 }
 
 int main(int argc, char* argv[])

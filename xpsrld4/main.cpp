@@ -83,6 +83,15 @@ JobQueue::~JobQueue()
 	}
 }
 
+void JobQueue::schedule(std::function<void()>&& job, std::uint32_t id)
+{
+	{
+		std::unique_lock lock(_jobs.at(id)._mutex);
+		_jobs.at(id)._queue.push(job);
+	}
+	_jobs.at(id)._cv.notify_one();
+}
+
 class Xpsrld4 : public mulex::MxBackend
 {
 public:
@@ -121,6 +130,14 @@ private:
 	static constexpr std::uint64_t NUM_PID_JOBS = 2;
 	JobQueue _pid_jobs;
 	std::vector<PidController> _pid;
+	std::mutex _pid_exclusive;
+
+	const std::map<Engine, std::string> engine_rdb_map = {
+		{ Engine::C1	, "/user/xpsrld4/c1/moving" 	  },
+		{ Engine::C2	, "/user/xpsrld4/c2/moving" 	  },
+		{ Engine::TABLE , "/user/xpsrld4/table/moving" 	  },
+		{ Engine::DET	, "/user/xpsrld4/detector/moving" }
+	};
 };
 
 Xpsrld4::Xpsrld4(int argc, char* argv[]) : mulex::MxBackend(argc, argv), _pid_jobs(NUM_PID_JOBS)
@@ -137,20 +154,20 @@ Xpsrld4::Xpsrld4(int argc, char* argv[]) : mulex::MxBackend(argc, argv), _pid_jo
 	rdb["/user/xpsrld4/detector/position"].create(mulex::RdbValueType::FLOAT64, 0.0f);
 
 	// Set default PID values
-	rdb["/user/xpsrld4/c1/kp"].create(mulex::RdbValueType::FLOAT64, 0.0);
+	rdb["/user/xpsrld4/c1/kp"].create(mulex::RdbValueType::FLOAT64, -0.9);
 	rdb["/user/xpsrld4/c1/ki"].create(mulex::RdbValueType::FLOAT64, 0.0);
 	rdb["/user/xpsrld4/c1/kd"].create(mulex::RdbValueType::FLOAT64, 0.0);
-	rdb["/user/xpsrld4/c1/kmin"].create(mulex::RdbValueType::FLOAT64, 0.0);
-	rdb["/user/xpsrld4/c1/kmax"].create(mulex::RdbValueType::FLOAT64, 0.0);
+	rdb["/user/xpsrld4/c1/kmin"].create(mulex::RdbValueType::FLOAT64, -360.0);
+	rdb["/user/xpsrld4/c1/kmax"].create(mulex::RdbValueType::FLOAT64, 360.0);
 	rdb["/user/xpsrld4/c1/kbias"].create(mulex::RdbValueType::FLOAT64, 0.0);
 	rdb["/user/xpsrld4/c1/ktolerance"].create(mulex::RdbValueType::FLOAT64, 0.00005);
 	_tolerance_c1 = rdb["/user/xpsrld4/c1/ktolerance"];
 
-	rdb["/user/xpsrld4/c2/kp"].create(mulex::RdbValueType::FLOAT64, 0.0);
+	rdb["/user/xpsrld4/c2/kp"].create(mulex::RdbValueType::FLOAT64, 0.9);
 	rdb["/user/xpsrld4/c2/ki"].create(mulex::RdbValueType::FLOAT64, 0.0);
 	rdb["/user/xpsrld4/c2/kd"].create(mulex::RdbValueType::FLOAT64, 0.0);
-	rdb["/user/xpsrld4/c2/kmin"].create(mulex::RdbValueType::FLOAT64, 0.0);
-	rdb["/user/xpsrld4/c2/kmax"].create(mulex::RdbValueType::FLOAT64, 0.0);
+	rdb["/user/xpsrld4/c2/kmin"].create(mulex::RdbValueType::FLOAT64, -360.0);
+	rdb["/user/xpsrld4/c2/kmax"].create(mulex::RdbValueType::FLOAT64, 360.0);
 	rdb["/user/xpsrld4/c2/kbias"].create(mulex::RdbValueType::FLOAT64, 0.0);
 	rdb["/user/xpsrld4/c2/ktolerance"].create(mulex::RdbValueType::FLOAT64, 0.00005);
 	_tolerance_c2 = rdb["/user/xpsrld4/c2/ktolerance"];
@@ -161,6 +178,7 @@ Xpsrld4::Xpsrld4(int argc, char* argv[]) : mulex::MxBackend(argc, argv), _pid_jo
 	double min = rdb["/user/xpsrld4/c1/kmin"];
 	double max = rdb["/user/xpsrld4/c1/kmax"];
 	double bias = rdb["/user/xpsrld4/c1/kbias"];
+	// log.info("kp = %lf", kp);
 	_pid.push_back(PidController(min, max, kp, kd, ki));
 	_pid.back().setBias(bias);
 
@@ -170,6 +188,7 @@ Xpsrld4::Xpsrld4(int argc, char* argv[]) : mulex::MxBackend(argc, argv), _pid_jo
 	min = rdb["/user/xpsrld4/c2/kmin"];
 	max = rdb["/user/xpsrld4/c2/kmax"];
 	bias = rdb["/user/xpsrld4/c2/kbias"];
+	// log.info("kp = %lf", kp);
 	_pid.push_back(PidController(min, max, kp, kd, ki));
 	_pid.back().setBias(bias);
 
@@ -179,45 +198,45 @@ Xpsrld4::Xpsrld4(int argc, char* argv[]) : mulex::MxBackend(argc, argv), _pid_jo
 	rdb["/user/xpsrld4/table/moving"].create(mulex::RdbValueType::BOOL, false);
 	rdb["/user/xpsrld4/detector/moving"].create(mulex::RdbValueType::BOOL, false);
 
-	rdb["/user/xpsrld4/*/moving"].watch([this](const auto& key, const auto& value) {
-		bool moving = value;
+	// rdb["/user/xpsrld4/*/moving"].watch([this](const auto& key, const auto& value) {
+	// 	bool moving = value;
 
-		static const std::map<std::string, Engine> engine_map = {
-			{ "c1"		, Engine::C1 	},
-			{ "c2"		, Engine::C2 	},
-			{ "table"	, Engine::TABLE },
-			{ "detector", Engine::DET 	}
-		};
+	// 	static const std::map<std::string, Engine> engine_map = {
+	// 		{ "c1"		, Engine::C1 	},
+	// 		{ "c2"		, Engine::C2 	},
+	// 		{ "table"	, Engine::TABLE },
+	// 		{ "detector", Engine::DET 	}
+	// 	};
 
-		if(moving)
-		{
-			std::string engine_str = splitString(key.c_str(), '/')[2];
-			Engine engine = engine_map.at(engine_str);
-			std::string kstring = key.c_str();
+	// 	if(moving)
+	// 	{
+	// 		std::string engine_str = splitString(key.c_str(), '/')[2];
+	// 		Engine engine = engine_map.at(engine_str);
+	// 		std::string kstring = key.c_str();
 
-			std::thread([this, engine, kstring]() {
-				std::int32_t status = getEngineStatus(engine);
+	// 		std::thread([this, engine, kstring]() {
+	// 			std::int32_t status = getEngineStatus(engine);
 
-				if(status == -1)
-				{
-					log.error("Failed to poll engine status.");
-					return;
-				}
+	// 			if(status == -1)
+	// 			{
+	// 				log.error("Failed to poll engine status.");
+	// 				return;
+	// 			}
 
-				while(status == 44 || status == 43) // Moving or homing
-				{
-					status = getEngineStatus(engine);
-					std::this_thread::sleep_for(std::chrono::milliseconds(500));
-				}
+	// 			while(status == 44 || status == 43) // Moving or homing
+	// 			{
+	// 				status = getEngineStatus(engine);
+	// 				std::this_thread::sleep_for(std::chrono::milliseconds(500));
+	// 			}
 
-				rdb[kstring] = false;
-			}).detach();
-		}
-	});
+	// 			rdb[kstring] = false;
+	// 		}).detach();
+	// 	}
+	// });
 
 	// Default positioners
-	rdb["/user/xpsrld4/c1/positioner"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("C1.Pos"));
-	rdb["/user/xpsrld4/c2/positioner"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("C2.Pos"));
+	rdb["/user/xpsrld4/c1/positioner"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("Crystal1.Pos"));
+	rdb["/user/xpsrld4/c2/positioner"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("Crystal2.Pos"));
 	rdb["/user/xpsrld4/table/positioner"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("Table.Pos"));
 	rdb["/user/xpsrld4/detector/positioner"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("Detector.Pos"));
 	_pos_c1 	  = std::string(static_cast<mulex::mxstring<512>>(rdb["/user/xpsrld4/c1/positioner"]).c_str());
@@ -278,6 +297,7 @@ Xpsrld4::Xpsrld4(int argc, char* argv[]) : mulex::MxBackend(argc, argv), _pid_jo
 	// Not so critical, update every 500 ms
 	// Wait 1 second to start gathering
 	deferExec([this]() {
+		std::unique_lock lock(_pid_exclusive);
 		rdb["/user/xpsrld4/table/position"] = getEnginePosition(Engine::TABLE);
 		rdb["/user/xpsrld4/detector/position"] = getEnginePosition(Engine::DET);
 	}, 1000, 500);
@@ -309,12 +329,22 @@ std::string Xpsrld4::writeCommand(std::string& command, bool response)
 		std::uint8_t buffer[256];
 		std::uint64_t rlen;
 
-		auto res = mulex::DrvTCPRecv(_handle, buffer, 256, 0, &rlen);
-		if(res != mulex::DrvTCPResult::RECV_OK || res != mulex::DrvTCPResult::RECV_TIMEOUT)
+		rlen = ::recv(_handle._socket._handle, reinterpret_cast<char*>(buffer), 256, 0);
+
+		if(rlen <= 0)
 		{
 			log.error("Failed to read result when issueing command: %s", command.c_str());
+			log.error("Char buffer: %s", reinterpret_cast<char*>(buffer));
 			return output;
 		}
+
+		// auto res = mulex::DrvTCPRecv(_handle, buffer, 256, 256, &rlen);
+		// if(res != mulex::DrvTCPResult::RECV_OK && res != mulex::DrvTCPResult::RECV_TIMEOUT)
+		// {
+		// 	log.error("Failed to read result when issueing command: %s", command.c_str());
+		// 	log.error("Char buffer: %s", reinterpret_cast<char*>(buffer));
+		// 	return output;
+		// }
 
 		output.resize(rlen);
 		std::memcpy(output.data(), buffer, rlen);
@@ -355,23 +385,25 @@ void Xpsrld4::moveEngineAbsolute(Engine engine, double pos)
 {
 	std::string command;
 
-	if(!checkEngineExtents(engine, pos))
-	{
-		log.error("Failed to increment engine %d to theoretical position %lf", static_cast<int>(engine), pos);
-		return;
-	}
+	// if(!checkEngineExtents(engine, pos))
+	// {
+	// 	log.error("Failed to increment engine %d to theoretical position %lf", static_cast<int>(engine), pos);
+	// 	return;
+	// }
 
 	switch(engine)
 	{
 		// C1/C2 can move at the same time assuming the xps-rld4 supports it
 		case Engine::C1:
 		{
-			_pid_jobs.schedule([this, engine, pos](){ moveEnginePID(engine, pos, _tolerance_c1); }, 0);
+			moveEnginePID(engine, pos, _tolerance_c1);
+			// _pid_jobs.schedule([this, engine, pos](){ moveEnginePID(engine, pos, _tolerance_c1); }, 0);
 			break;
 		}
 		case Engine::C2:
 		{
-			_pid_jobs.schedule([this, engine, pos](){ moveEnginePID(engine, pos, _tolerance_c2); }, 1);
+			moveEnginePID(engine, pos, _tolerance_c2);
+			// _pid_jobs.schedule([this, engine, pos](){ moveEnginePID(engine, pos, _tolerance_c2); }, 1);
 			break;
 		}
 		case Engine::DET:
@@ -389,21 +421,13 @@ void Xpsrld4::moveEngine(Engine engine, double pos)
 {
 	std::string command;
 
-	static const std::map<Engine, std::string> engine_rdb_map = {
-		{ Engine::C1	, "/user/xpsrld4/c1/moving" 	  },
-		{ Engine::C2	, "/user/xpsrld4/c2/moving" 	  },
-		{ Engine::TABLE , "/user/xpsrld4/table/moving" 	  },
-		{ Engine::DET	, "/user/xpsrld4/detector/moving" }
-	};
-
-	if(!checkEngineExtents(engine, pos))
-	{
-		log.error("Failed to increment engine %d to theoretical position %lf", static_cast<int>(engine), pos);
-		return;
-	}
+	// if(!checkEngineExtents(engine, pos))
+	// {
+	// 	log.error("Failed to increment engine %d to theoretical position %lf", static_cast<int>(engine), pos);
+	// 	return;
+	// }
 
 	// In motion
-	rdb[engine_rdb_map.at(engine)] = true;
 
 	switch(engine)
 	{
@@ -419,12 +443,16 @@ void Xpsrld4::moveEngine(Engine engine, double pos)
 		}
 		case Engine::DET:
 		{
+			rdb[engine_rdb_map.at(engine)] = true;
 			command = "GroupMoveAbsolute(" + _pos_detector + "," + std::to_string(pos) + ")";
+			rdb[engine_rdb_map.at(engine)] = false;
 			break;
 		}
 		case Engine::TABLE:
 		{
+			rdb[engine_rdb_map.at(engine)] = true;
 			command = "GroupMoveAbsolute(" + _pos_table + "," + std::to_string(pos) + ")";
+			rdb[engine_rdb_map.at(engine)] = false;
 			break;
 		}
 	}
@@ -434,15 +462,35 @@ void Xpsrld4::moveEngine(Engine engine, double pos)
 
 void Xpsrld4::moveEnginePID(Engine engine, double pos, double tolerance)
 {
-	std::underlying_type_t<Engine> axis = static_cast<std::underlying_type_t<Engine>>(engine);
-	if(axis > 1)
+	// std::underlying_type_t<Engine> axis = static_cast<std::underlying_type_t<Engine>>(engine);
+	// if(axis > 1)
+	// {
+	// 	log.error("Cannot move with PID engine that uses positon self-referencing on XPS-RLD4.");
+	// 	return;
+	// }
+
+	std::unique_lock lock(_pid_exclusive);
+	rdb[engine_rdb_map.at(engine)] = true;
+
+	int axis = 0;
+	PidController pid(0, 0, 0, 0, 0);
+	switch(engine)
 	{
-		log.error("Cannot move with PID engine that uses positon self-referencing on XPS-RLD4.");
-		return;
+		case Engine::C1:
+			axis = 1;
+			pid = _pid[0];
+			break;
+		case Engine::C2:
+			axis = 3;
+			pid = _pid[1];
+			break;
+		default:
+			break;
 	}
 
 	double read_pos = rdb["/user/eib7/axis/" + std::to_string(axis) + "/position"];
-	PidController& pid = _pid[axis];
+	log.info("Move PID on axis %d, position: %lf", axis, read_pos);
+	// PidController pid = _pid[axis];
 	pid.setTarget(pos);
 	double err = pid.getError(read_pos);
 
@@ -457,6 +505,7 @@ void Xpsrld4::moveEnginePID(Engine engine, double pos, double tolerance)
 		}
 
 		double move = pid.correct(read_pos);
+		log.info("Move PID on axis %d, position: %lf, target: %lf, correct: %lf, error: %lf", axis, read_pos, pos, move, err);
 
 		// NOTE: (Cesar) How long does this take? Is the return just an ACK? Or does it wait for motion to end?
 		moveEngine(engine, move);
@@ -467,6 +516,7 @@ void Xpsrld4::moveEnginePID(Engine engine, double pos, double tolerance)
 		read_pos = rdb["/user/eib7/axis/" + std::to_string(axis) + "/position"];
 		err = pid.getError(read_pos);
 	}
+	rdb[engine_rdb_map.at(engine)] = false;
 }
 
 double Xpsrld4::getEnginePosition(Engine engine)
@@ -493,6 +543,7 @@ double Xpsrld4::getEnginePosition(Engine engine)
 	}
 
 	std::string pos_str = writeCommand(command);
+	// log.info("%s", pos_str.c_str());
 	std::vector<std::string> res = splitString(pos_str);
 
 	if(res.size() < 1)
