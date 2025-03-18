@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 
-project(neodcs VERSION 1.0.0)
+project(neodcs VERSION 1.1.0)
 
 set(CMODE "" CACHE STRING "What version are we compiling (PARis or LISbon).")
 
@@ -36,6 +36,7 @@ macro(generate_lisbon)
 	add_subdirectory(composer_lis) 	# File writer / Online analysis
 	add_subdirectory(runcont)	   	# Run control
 	add_subdirectory(onl_analyzer)  # Online analyzer
+	add_subdirectory(axas_mca)		# MCA data gathering
 endmacro()
 
 if(CMODE STREQUAL "")
