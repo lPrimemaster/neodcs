@@ -187,6 +187,12 @@ void AxasMCA::update()
 	static std::string cmd1 = "mca";
 	static std::string cmd2 = "module_statistics_2";
 
+	if(!status)
+	{
+		// Run will stop
+		return;
+	}
+
 	for(int c = 0; c < devchannels; c++)
 	{
 		runWithCheck(xiaGetRunData, c, cmd1.data(), mcadata.data());
