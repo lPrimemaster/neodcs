@@ -7,7 +7,8 @@
 		"build-poscont": "vite build -- --target=position_control",
 		"build-tempcont": "vite build -- --target=temp_control",
 		"build-dcshisto": "vite build -- --target=dcs_histo",
-		"build-all": "yarn build-daqwave && yarn build-poscont && yarn build-tempcont && yarn build-dcshisto"
+		"build-mcahisto": "vite build -- --target=mca_spectrum",
+		"build-all": "yarn build-daqwave && yarn build-poscont && yarn build-tempcont && yarn build-dcshisto && yarn build-mcahisto"
 	},
 	"license": "MIT",
 	"devDependencies": {

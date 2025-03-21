@@ -146,6 +146,12 @@ AxasMCA::AxasMCA(int argc, char* argv[]) : mulex::MxBackend(argc, argv), status(
 
 	registerRunStartStop(&AxasMCA::startMeasurement, &AxasMCA::stopMeasurement);
 	registerEvent("axas::mcadata");
+
+	// Create Stats keys
+	rdb["/user/axas/stats/realtime"].create(mulex::RdbValueType::FLOAT64, 0.0);
+	rdb["/user/axas/stats/livetime"].create(mulex::RdbValueType::FLOAT64, 0.0);
+	rdb["/user/axas/stats/outrate"].create(mulex::RdbValueType::FLOAT64, 0.0);
+	rdb["/user/axas/stats/inrate"].create(mulex::RdbValueType::FLOAT64, 0.0);
 }
 
 AxasMCA::~AxasMCA()
