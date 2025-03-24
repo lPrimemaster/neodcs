@@ -3,7 +3,8 @@ add_executable(axasmca
 )
 
 # Default path from Windows installer
-set(XIA_PATH "$ENV{ProgramFiles\(x86\)}/XIA/ProSpect 1.1/sdk")
+# set(XIA_PATH "$ENV{ProgramFiles\(x86\)}/XIA/ProSpect 1.1/sdk")
+set(XIA_PATH "D:/ProSpect 1.1/sdk")
 add_library(xialib INTERFACE)
 target_include_directories(xialib INTERFACE ${XIA_PATH}/inc/)
 target_link_libraries(xialib INTERFACE ${XIA_PATH}/lib/handel.lib)
