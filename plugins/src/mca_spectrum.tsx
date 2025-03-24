@@ -82,8 +82,9 @@ const MCASpectrumPlugin : Component = () => {
 						series={[{}, { label: 'Raw Spectrum', stroke: 'black' }]}
 						x={x()}
 						y={[y()]}
-						scales={{ x: { time: false }, y: { range: [0, 1000] } }}
+						scales={{ x: { time: false }, y: { range: [0, 100] } }}
 						class="h-56 w-full"
+						autoYScale
 					/>
 				</div>
 			</Card>
