@@ -37,6 +37,7 @@ macro(generate_lisbon)
 	add_subdirectory(runcont)	   	# Run control
 	add_subdirectory(onl_analyzer)  # Online analyzer
 	add_subdirectory(axas_mca)		# MCA data gathering
+	add_subdirectory(pmc8742)		# Piezo tilt controller
 endmacro()
 
 if(CMODE STREQUAL "")
