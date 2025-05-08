@@ -39,7 +39,7 @@ public:
 
 public:
 	void createTask(const char* name = "");
-	std::string createAnalogInputChannel(const std::string& task, const std::string& channel, double rmin, double rmax, const std::string& virtual_name = "");
+	std::string createAnalogInputChannel(const std::string& task, const std::string& channel, double rmin, double rmax, const std::string& virtual_name = "", int ni_ref = DAQmx_Val_Cfg_Default);
 	std::string createCounterInputChannel(const std::string& task, const std::string& channel, const std::string& virtual_name = "");
 	void setClockSampleTiming(const std::string& task, double rate);
 	void registerCallback(const std::string& task, DAQmxEveryNSamplesEventCallbackPtr func, void* userdata);

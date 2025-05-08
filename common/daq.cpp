@@ -133,12 +133,18 @@ void NIDaq::createTask(const char* name)
 	_tasks.emplace(name, handle);
 }
 
-std::string NIDaq::createAnalogInputChannel(const std::string& task, const std::string& channel, double rmin, double rmax, const std::string& virtual_name)
+std::string NIDaq::createAnalogInputChannel(
+	const std::string& task,
+	const std::string& channel,
+	double rmin, double rmax,
+	const std::string& virtual_name,
+	int ni_ref
+)
 {
 	TaskHandle taskh = getTask(task);
 	if(!taskh) return "";
 
-	if(gotError(DAQmxCreateAIVoltageChan(taskh, channel.c_str(), "", DAQmx_Val_Cfg_Default, rmin, rmax, DAQmx_Val_Volts, NULL)))
+	if(gotError(DAQmxCreateAIVoltageChan(taskh, channel.c_str(), "", ni_ref, rmin, rmax, DAQmx_Val_Volts, NULL)))
 	{
 		_log->error("Failed to create analog channel.");
 		return "";

@@ -1,5 +1,6 @@
 #include "../common/daq.h"
 #include <span>
+#include <numeric>
 
 class AIDaq : public mulex::MxBackend
 {
@@ -7,11 +8,23 @@ public:
 	AIDaq(int argc, char* argv[]);
 	~AIDaq();
 
+	using ChannelWorker = std::function<void(const std::span<double>&)>;
+
 	// Pass by value is important here. Do not modify
 	void dispatchChannelEvents(TaskHandle task, std::vector<double> data, std::uint64_t timestamp, uInt32 nchannels);
+	void channelDoWork(const std::string& channel, const ChannelWorker& f);
+
+	void calculateClinometerAngle(const std::span<double>& data, std::atomic<double>& out);
+
+	void setupClinometer();
+	void setupDetectors();
 
 private:
 	NIDaq _daq;
+	std::map<std::string, ChannelWorker> _workers;
+
+	std::atomic<double> _cli_angley;
+	std::atomic<double> _cli_anglex;
 };
 
 static int32 NIVoltageCallback(TaskHandle task, int32 everyNsamplesEventType, uInt32 nSamples, void* userData)
@@ -55,38 +68,65 @@ static int32 NIVoltageCallback(TaskHandle task, int32 everyNsamplesEventType, uI
 	return 0;
 }
 
-AIDaq::AIDaq(int argc, char* argv[]) : mulex::MxBackend(argc, argv), _daq(&log)
+void AIDaq::calculateClinometerAngle(const std::span<double>& data, std::atomic<double>& out)
 {
-	_daq.createTask("dcs_analog");
+	double avg = std::accumulate(data.begin(), data.end(), 0.0);
+	out = (avg - 2.5) / (5.0 / 20.0);
+}
 
-	// This backend also declared the signals onto the rdb for other backends to use
+void AIDaq::setupDetectors()
+{
 	rdb["/user/signals/apd0_signal/hardware_channel"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("Dev1/ai0"));
 	rdb["/user/signals/apd1_signal/hardware_channel"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("Dev1/ai1"));
-	rdb["/user/signals/clinometerx/hardware_channel"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("Dev1/ai2"));
-	rdb["/user/signals/clinometery/hardware_channel"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("Dev1/ai3"));
 
 	mulex::mxstring<512> apd0_hc = rdb["/user/signals/apd0_signal/hardware_channel"];
 	mulex::mxstring<512> apd1_hc = rdb["/user/signals/apd1_signal/hardware_channel"];
-	mulex::mxstring<512> clix_hc = rdb["/user/signals/clinometerx/hardware_channel"];
-	mulex::mxstring<512> cliy_hc = rdb["/user/signals/clinometery/hardware_channel"];
 
 	std::string cname = _daq.createAnalogInputChannel("dcs_analog", apd0_hc.c_str(), -10.0, 10.0, "apd0_signal");
 	registerEvent("aidaq::" + cname);
 
 	cname = _daq.createAnalogInputChannel("dcs_analog", apd1_hc.c_str(), -10.0, 10.0, "apd1_signal");
 	registerEvent("aidaq::" + cname);
+}
 
-	cname = _daq.createAnalogInputChannel("dcs_analog", clix_hc.c_str(),   0.0,  5.0, "clinometerx");
+void AIDaq::setupClinometer()
+{
+	rdb["/user/signals/clinometerx/hardware_channel"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("Dev1/ai1"));
+	rdb["/user/signals/clinometery/hardware_channel"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("Dev1/ai0"));
+	mulex::mxstring<512> clix_hc = rdb["/user/signals/clinometerx/hardware_channel"];
+	mulex::mxstring<512> cliy_hc = rdb["/user/signals/clinometery/hardware_channel"];
+
+	std::string cname = _daq.createAnalogInputChannel("dcs_analog", clix_hc.c_str(), 0.0, 5.0, "clinometerx", DAQmx_Val_RSE);
 	registerEvent("aidaq::" + cname);
+	channelDoWork(cname, [this](const auto& data) { calculateClinometerAngle(data, _cli_anglex); });
 
-	cname = _daq.createAnalogInputChannel("dcs_analog", cliy_hc.c_str(),   0.0,  5.0, "clinometery");
+	cname = _daq.createAnalogInputChannel("dcs_analog", cliy_hc.c_str(), 0.0, 5.0, "clinometery", DAQmx_Val_RSE);
 	registerEvent("aidaq::" + cname);
+	channelDoWork(cname, [this](const auto& data) { calculateClinometerAngle(data, _cli_angley); });
 
+	rdb["/user/anglex"].create(mulex::RdbValueType::FLOAT64, 0.0);
+	rdb["/user/angley"].create(mulex::RdbValueType::FLOAT64, 0.0);
+
+	deferExec([this]() {
+		rdb["/user/anglex"] = _cli_anglex.load();
+		rdb["/user/angley"] = _cli_angley.load();
+	}, 0, 500);
+
+}
+
+AIDaq::AIDaq(int argc, char* argv[]) : mulex::MxBackend(argc, argv), _daq(&log)
+{
+	// Create DAQ task
+	_daq.createTask("dcs_analog");
+	
+	// Generic setup
+	setupDetectors();
+	setupClinometer();
+
+	// Set Task Timings and callback
 	rdb["/user/nidaq/sample_rate"].create(mulex::RdbValueType::FLOAT64, 250000.0);
 	_daq.setClockSampleTiming("dcs_analog", rdb["/user/nidaq/sample_rate"]);
-
 	_daq.registerCallback("dcs_analog", NIVoltageCallback, this);
-
 	_daq.startTask("dcs_analog");
 }
 
@@ -114,11 +154,23 @@ void AIDaq::dispatchChannelEvents(TaskHandle task, std::vector<double> data, std
 	for(const std::string& channel : _daq.getTaskChannels(task))
 	{
 		std::memcpy(buffer.data(), &timestamp, sizeof(std::uint64_t));
-		CopyDoubleVectorToBytes(std::span<double>(data.data() + start, NIDaq::SAMPLES_PER_CHANNEL), buffer, sizeof(std::uint64_t));
+		auto span = std::span<double>(data.data() + start, NIDaq::SAMPLES_PER_CHANNEL);
+		CopyDoubleVectorToBytes(span, buffer, sizeof(std::uint64_t));
 		auto channel_alias = _daq.getChannelAlias(channel);
 		dispatchEvent("aidaq::" + channel_alias.value_or(channel), buffer);
 		start += NIDaq::SAMPLES_PER_CHANNEL;
+
+		auto worker = _workers.find(channel_alias.value_or(channel));
+		if(worker != _workers.end())
+		{
+			worker->second(span);
+		}
 	}
+}
+
+void AIDaq::channelDoWork(const std::string& channel, const ChannelWorker& f)
+{
+	_workers[channel] = f;
 }
 
 int main(int argc, char* argv[])
