@@ -15,6 +15,8 @@ public:
 	void moveAbsolute(int controller, int axis, int steps);
 	void moveRelative(int controller, int axis, int steps);
 
+	mulex::RPCGenericType userRpc(const std::vector<std::uint8_t>& data);
+
 private:
 	libusb_context* _ctx = nullptr;
 	libusb_device_handle* _handle = nullptr;
@@ -63,6 +65,8 @@ PMC8742::PMC8742(int argc, char* argv[]) : MxBackend(argc, argv)
 		libusb_exit(_ctx);
 		return;
 	}
+
+	registerUserRpc(&PMC8742::userRpc);
 }
 
 PMC8742::~PMC8742()
@@ -164,6 +168,41 @@ void PMC8742::moveRelative(int controller, int axis, int steps)
 	std::ostringstream ss;
 	ss << controller << ">" << axis << "PR" << steps << ";";
 	send(ss.str());
+}
+
+template<typename T>
+static T ExtractData(const std::uint8_t*& data)
+{
+	T out;
+	out = *reinterpret_cast<const T*>(data);
+	data += sizeof(T);
+	return out;
+}
+
+mulex::RPCGenericType PMC8742::userRpc(const std::vector<std::uint8_t>& data)
+{
+	std::string command = mulex::string32(reinterpret_cast<const char*>(data.data())).c_str();
+	const std::uint8_t* cmd_data = data.data() + 32;
+
+	if(command == "moveAbsolute")
+	{
+		std::int32_t controller = ExtractData<std::int32_t>(cmd_data);
+		std::int32_t axis 		= ExtractData<std::int32_t>(cmd_data);
+		std::int32_t steps 		= ExtractData<std::int32_t>(cmd_data);
+		moveAbsolute(controller, axis, steps);
+		return std::int32_t(0);
+	}
+	else if(command == "moveRelative")
+	{
+		std::int32_t controller = ExtractData<std::int32_t>(cmd_data);
+		std::int32_t axis 		= ExtractData<std::int32_t>(cmd_data);
+		std::int32_t steps 		= ExtractData<std::int32_t>(cmd_data);
+		moveRelative(controller, axis, steps);
+		return std::int32_t(0);
+	}
+
+	log.error("Unknown RPC command: %s.", command.c_str());
+	return std::int32_t(1);
 }
 
 int main(int argc, char* argv[])
