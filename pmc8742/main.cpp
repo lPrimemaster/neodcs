@@ -35,8 +35,8 @@ PMC8742::PMC8742(int argc, char* argv[]) : MxBackend(argc, argv)
 		return;
 	}
 
-	rdb["/user/pmc8742/vid"].create(mulex::RdbValueType::UINT16, std::uint16_t());
-	rdb["/user/pmc8742/pid"].create(mulex::RdbValueType::UINT16, std::uint16_t());
+	rdb["/user/pmc8742/vid"].create(mulex::RdbValueType::UINT16, std::uint16_t(0x104D));
+	rdb["/user/pmc8742/pid"].create(mulex::RdbValueType::UINT16, std::uint16_t(0x4000));
 
 	std::uint16_t vid = rdb["/user/pmc8742/vid"];
 	std::uint16_t pid = rdb["/user/pmc8742/pid"];
@@ -44,7 +44,7 @@ PMC8742::PMC8742(int argc, char* argv[]) : MxBackend(argc, argv)
 	_handle = libusb_open_device_with_vid_pid(_ctx, vid, pid);
 	if(!_handle)
 	{
-		log.error("Failed to open pmc8742 at %dx-%dx.", vid, pid);
+		log.error("Failed to open pmc8742 at 0x%04x-0x%04x.", vid, pid);
 		libusb_exit(_ctx);
 		_error = true;
 		return;
