@@ -1,5 +1,6 @@
 #include "daq.h"
 #include "utils.h"
+#include <cmath>
 
 NIError NIGetError(std::int32_t error)
 {
@@ -188,10 +189,11 @@ std::string NIDaq::createCounterInputChannel(const std::string& task, const std:
 void NIDaq::setClockSampleTiming(const std::string& task, double rate)
 {
 	TaskHandle taskh = getTask(task);
+	uInt32 nchannels = getTaskNumChannels(task);
 	if(!taskh) return;
 
 	// Setting up for the internal clock
-	if(gotError(DAQmxCfgSampClkTiming(taskh, "", rate, DAQmx_Val_Rising, DAQmx_Val_ContSamps, SAMPLES_PER_CHANNEL)))
+	if(gotError(DAQmxCfgSampClkTiming(taskh, "", std::floor(rate / nchannels), DAQmx_Val_Rising, DAQmx_Val_ContSamps, SAMPLES_PER_CHANNEL)))
 	{
 		_log->error("Failed to setup clock sample timing.");
 		return;

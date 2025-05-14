@@ -1,9 +1,14 @@
 {
-	"name": "mx-plugin",
+	"name": "dcs-plugins",
 	"version": "1.0.0",
 	"description": "",
 	"scripts": {
-		"build": "vite build"
+		"build-daqwave": "vite build -- --target=daq_waveforms",
+		"build-poscont": "vite build -- --target=position_control",
+		"build-tempcont": "vite build -- --target=temp_control",
+		"build-dcshisto": "vite build -- --target=dcs_histo",
+		"build-mcahisto": "vite build -- --target=mca_spectrum",
+		"build-all": "yarn build-daqwave && yarn build-poscont && yarn build-tempcont && yarn build-dcshisto && yarn build-mcahisto"
 	},
 	"license": "MIT",
 	"devDependencies": {
@@ -13,6 +18,7 @@
 		"solid-devtools": "^0.29.2",
 		"tailwindcss": "^3.4.14",
 		"typescript": "^5.3.3",
+		"argparse": "^2.0.1",
 		"vite": "^5.0.11",
 		"vite-plugin-solid": "^2.8.2"
 	},
@@ -24,6 +30,6 @@
 		"solid-transition-group": "^0.2.3",
 		"tailwind-merge": "^2.5.4",
 		"tailwindcss-animate": "^1.0.7",
-		"uplot": "^1.6.32"
+		"uplot": "^1.6.31"
 	}
 }

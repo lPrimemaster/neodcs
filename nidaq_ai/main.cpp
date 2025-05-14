@@ -1,9 +1,12 @@
 #include "../common/daq.h"
 #include <span>
 #include <numeric>
+#include <cmath>
 
 class AIDaq : public mulex::MxBackend
 {
+private:
+	static constexpr std::uint64_t NPIRANI = 3;
 public:
 	AIDaq(int argc, char* argv[]);
 	~AIDaq();
@@ -15,9 +18,11 @@ public:
 	void channelDoWork(const std::string& channel, const ChannelWorker& f);
 
 	void calculateClinometerAngle(const std::span<double>& data, std::atomic<double>& out);
+	void calculatePiraniPressure(const std::span<double>& data, std::atomic<double>& out);
 
 	void setupClinometer();
 	void setupDetectors();
+	void setupPiraniGauges();
 
 private:
 	NIDaq _daq;
@@ -25,6 +30,8 @@ private:
 
 	std::atomic<double> _cli_angley;
 	std::atomic<double> _cli_anglex;
+
+	std::atomic<double> _pirani_mbar[NPIRANI];
 };
 
 static int32 NIVoltageCallback(TaskHandle task, int32 everyNsamplesEventType, uInt32 nSamples, void* userData)
@@ -70,8 +77,14 @@ static int32 NIVoltageCallback(TaskHandle task, int32 everyNsamplesEventType, uI
 
 void AIDaq::calculateClinometerAngle(const std::span<double>& data, std::atomic<double>& out)
 {
-	double avg = std::accumulate(data.begin(), data.end(), 0.0);
+	double avg = std::accumulate(data.begin(), data.end(), 0.0) / data.size();
 	out = (avg - 2.5) / (5.0 / 20.0);
+}
+
+void AIDaq::calculatePiraniPressure(const std::span<double>& data, std::atomic<double>& out)
+{
+	double avg = std::accumulate(data.begin(), data.end(), 0.0) / data.size();
+	out = std::pow(10, (avg - 6.143) / 1.286);
 }
 
 void AIDaq::setupDetectors()
@@ -107,11 +120,25 @@ void AIDaq::setupClinometer()
 	rdb["/user/anglex"].create(mulex::RdbValueType::FLOAT64, 0.0);
 	rdb["/user/angley"].create(mulex::RdbValueType::FLOAT64, 0.0);
 
-	deferExec([this]() {
-		rdb["/user/anglex"] = _cli_anglex.load();
-		rdb["/user/angley"] = _cli_angley.load();
-	}, 0, 500);
+	rdb["/user/pirani0"].create(mulex::RdbValueType::FLOAT64, 0.0);
+	rdb["/user/pirani1"].create(mulex::RdbValueType::FLOAT64, 0.0);
+	rdb["/user/pirani2"].create(mulex::RdbValueType::FLOAT64, 0.0);
+}
 
+void AIDaq::setupPiraniGauges()
+{
+	for(int i = 0; i < NPIRANI; i++)
+	{
+		const std::string name = "pirani" + std::to_string(i);
+		const std::string key = "/user/signals/" + name + "/hardware_channel";
+		rdb[key].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("Dev1/ai" + std::to_string(i + 4)));
+		const mulex::mxstring<512> channel = rdb[key];
+		std::string cname = _daq.createAnalogInputChannel("dcs_analog", channel.c_str(), 0.0, 10.0, name.c_str(), DAQmx_Val_RSE);
+		registerEvent("aidaq::" + cname);
+		channelDoWork(cname, [this, i](const auto& data) {
+			calculatePiraniPressure(data, _pirani_mbar[i]);
+		});
+	}
 }
 
 AIDaq::AIDaq(int argc, char* argv[]) : mulex::MxBackend(argc, argv), _daq(&log)
@@ -120,8 +147,18 @@ AIDaq::AIDaq(int argc, char* argv[]) : mulex::MxBackend(argc, argv), _daq(&log)
 	_daq.createTask("dcs_analog");
 	
 	// Generic setup
-	setupDetectors();
+	// setupDetectors();
 	setupClinometer();
+	setupPiraniGauges();
+
+	deferExec([this]() {
+		rdb["/user/anglex"] = _cli_anglex.load();
+		rdb["/user/angley"] = _cli_angley.load();
+
+		rdb["/user/pirani0"] = _pirani_mbar[0].load();
+		rdb["/user/pirani1"] = _pirani_mbar[1].load();
+		rdb["/user/pirani2"] = _pirani_mbar[2].load();
+	}, 0, 500);
 
 	// Set Task Timings and callback
 	rdb["/user/nidaq/sample_rate"].create(mulex::RdbValueType::FLOAT64, 250000.0);

@@ -9,18 +9,6 @@ export class MxGenericType
 							  // 'generic' for size + byte-by-byte repr
 	}
 
-	static makeData(data: Uint8Array, intype: string = 'native') : MxGenericType {
-		// Append size before the intype if the type is generic
-		if(intype === 'generic') {
-			let ndata = new Uint8Array(data.length + 8); // 64-bit unsigned size
-			let sdata = new BigUint64Array([BigInt(data.length)]);
-			ndata.set(new Uint8Array(sdata.buffer), 0);
-			ndata.set(data, 8);
-			return new MxGenericType(ndata, intype);
-		}
-		return new MxGenericType(data, intype);
-	}
-
 	static fromData(data: Uint8Array, intype: string = 'native') : MxGenericType {
 		return new MxGenericType(data, intype);
 	}
@@ -48,10 +36,6 @@ export class MxGenericType
 
 	static uint32(value: number, intype: string = 'native') : MxGenericType {
 		return MxGenericType.fromValue(value, 'uint32', intype);
-	}
-
-	static int64(value: BigInt, intype: string = 'native') : MxGenericType {
-		return MxGenericType.fromValue(value, 'int64', intype);
 	}
 
 	static uint64(value: BigInt, intype: string = 'native') : MxGenericType {
@@ -192,24 +176,6 @@ export class MxGenericType
 			case 'float64': { return  9; }
 			case 'string' : { return 10; }
 			case 'bool'   : { return 11; }
-		}
-		return NaN;
-	}
-
-	static sizeFromType(type: string): number {
-		switch(type.toLowerCase()) {
-			case 'int8'    : { return  1; }
-			case 'int16'   : { return  2; }
-			case 'int32'   : { return  4; }
-			case 'int64'   : { return  8; }
-			case 'uint8'   : { return  1; }
-			case 'uint16'  : { return  2; }
-			case 'uint32'  : { return  4; }
-			case 'uint64'  : { return  8; }
-			case 'float32' : { return  4; }
-			case 'float64' : { return  8; }
-			case 'string32': { return 32; }
-			case 'bool'    : { return  1; }
 		}
 		return NaN;
 	}
@@ -436,13 +402,6 @@ export class MxGenericType
 				else if(type === 'bool') {
 					element.push(view.getUint8(packoffset) === 1);
 					packoffset += 1;
-				}
-				else if(type === 'bytearray') {
-					const arr_size = Number(view.getBigUint64(packoffset, true));
-					packoffset += 8;
-
-					element.push(new Uint8Array(view.buffer, view.byteOffset + packoffset, arr_size));
-					packoffset += arr_size;
 				}
 				else {
 					// TODO: (Cesar) Emit frontend errors to the frontend (toast, etc, ...)

@@ -62,14 +62,8 @@ export class MxWebsocket {
 		};
 	}
 
-	private constructor(endpoint: string, port: number, https: boolean) {
-		if(https) {
-			// port does not matter via https, we just forward!
-			this.address = `wss://${endpoint}/ws/`;
-		}
-		else {
-			this.address = `ws://${endpoint}:${port}`;
-		}
+	private constructor(endpoint: string, port: number) {
+		this.address = `ws://${endpoint}:${port}`;
 		this.socket = new WebSocket(`${this.address}`);
 		this.messageid = 0;
 		this.deferred_p = new Map<number, [Function, string]>();
@@ -87,8 +81,7 @@ export class MxWebsocket {
 
 	public static get instance(): MxWebsocket {
 		if(!MxWebsocket.s_instance) {
-			const port = parseInt(location.port);
-			MxWebsocket.s_instance = new MxWebsocket(location.hostname, isNaN(port) ? 80 : port, location.protocol === "https:");
+			MxWebsocket.s_instance = new MxWebsocket(location.hostname, parseInt(location.port));
 		}
 		return MxWebsocket.s_instance;
 	}

@@ -14,6 +14,7 @@ public:
 
 	void moveAbsolute(int controller, int axis, int steps);
 	void moveRelative(int controller, int axis, int steps);
+	std::int32_t getPosition(int controller, int axis);
 
 	mulex::RPCGenericType userRpc(const std::vector<std::uint8_t>& data);
 
@@ -24,6 +25,11 @@ private:
 
 	std::uint8_t _ep_in;
 	std::uint8_t _ep_out;
+
+	std::int32_t _pos_axis_1;
+	std::int32_t _pos_axis_2;
+	std::int32_t _pos_axis_3;
+	std::int32_t _pos_axis_4;
 };
 
 PMC8742::PMC8742(int argc, char* argv[]) : MxBackend(argc, argv)
@@ -67,6 +73,14 @@ PMC8742::PMC8742(int argc, char* argv[]) : MxBackend(argc, argv)
 	}
 
 	registerUserRpc(&PMC8742::userRpc);
+
+	deferExec([this]() {
+		_pos_axis_1 = getPosition(1, 2);
+		_pos_axis_2 = getPosition(1, 3);
+
+		_pos_axis_3 = getPosition(2, 1);
+		_pos_axis_4 = getPosition(2, 4);
+	}, 0, 1000);
 }
 
 PMC8742::~PMC8742()
@@ -84,9 +98,8 @@ void PMC8742::send(const std::string& data)
 	if(_error) return;
 
 	int written;
-	int r = libusb_bulk_transfer(_handle, _ep_out, reinterpret_cast<std::uint8_t*>(const_cast<char*>(data.data())), data.size() + 1, &written, 1000);
-
-	if(r != 0 || written != data.size() + 1)
+	int r = libusb_bulk_transfer(_handle, _ep_out, reinterpret_cast<std::uint8_t*>(const_cast<char*>(data.data())), data.size(), &written, 1000);
+	if(r < 0 || written != data.size())
 	{
 		log.error("Failed to send data via USB.");
 	}
@@ -100,15 +113,13 @@ std::string PMC8742::receive()
 	int read;
 	int r = libusb_bulk_transfer(_handle, _ep_in, buffer, 512, &read, 1000);
 
-	if(r != 0)
+	if(r < 0)
 	{
 		log.error("Failed to receive data via USB.");
 		return "";
 	}
 
 	std::string out = reinterpret_cast<char*>(buffer);
-	// out.resize(read);
-	// std::memcpy(out.data(), buffer, read);
 	return out;
 }
 
@@ -134,7 +145,7 @@ bool PMC8742::getEndpoints()
 			{
 				const libusb_endpoint_descriptor& ep = aset.endpoint[k];
 				bool in = (ep.bEndpointAddress & LIBUSB_ENDPOINT_DIR_MASK) == LIBUSB_ENDPOINT_IN;
-				log.info("Found Endpoint: 0x%dx (%s).",
+				log.info("Found Endpoint: 0x%x (%s).",
 			 		ep.bEndpointAddress,
 			 		in ? "IN" : "OUT"
 				);
@@ -159,15 +170,26 @@ bool PMC8742::getEndpoints()
 void PMC8742::moveAbsolute(int controller, int axis, int steps)
 {
 	std::ostringstream ss;
-	ss << controller << ">" << axis << "PA" << steps << ";";
+	ss << controller << ">" << axis << "PA" << steps << ";\r";
+	mulex::LogDebug("Issueing command: %d>%dPA%d;.", controller, axis, steps);
 	send(ss.str());
 }
 
 void PMC8742::moveRelative(int controller, int axis, int steps)
 {
 	std::ostringstream ss;
-	ss << controller << ">" << axis << "PR" << steps << ";";
+	ss << controller << ">" << axis << "PR" << steps << ";\r";
+	mulex::LogDebug("Issueing command: %d>%dPR%d;.", controller, axis, steps);
 	send(ss.str());
+}
+
+std::int32_t PMC8742::getPosition(int controller, int axis)
+{
+	std::ostringstream sso;
+	sso << controller << ">" << axis << "TP?;\r";
+	send(sso.str());
+	std::string response = receive();
+	return std::stoi(response.substr(response.find_first_of('>') + 1, response.find_first_of('\r') - 1));
 }
 
 template<typename T>
@@ -199,6 +221,19 @@ mulex::RPCGenericType PMC8742::userRpc(const std::vector<std::uint8_t>& data)
 		std::int32_t steps 		= ExtractData<std::int32_t>(cmd_data);
 		moveRelative(controller, axis, steps);
 		return std::int32_t(0);
+	}
+	else if(command == "getPositions")
+	{
+		std::vector<std::int32_t> pos = {
+			_pos_axis_1,
+			_pos_axis_2,
+			_pos_axis_3,
+			_pos_axis_4
+		};
+
+		mulex::LogDebug("Sending positions. (%d, %d, %d, %d).", _pos_axis_1, _pos_axis_2, _pos_axis_3, _pos_axis_4);
+
+		return pos;
 	}
 
 	log.error("Unknown RPC command: %s.", command.c_str());

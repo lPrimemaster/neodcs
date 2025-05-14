@@ -14,6 +14,7 @@ option(LTRACE "Enable tracing." OFF)
 
 if(WIN32)
 	set(VCPKG_TARGET_TRIPLET "x64-mingw-dynamic" CACHE STRING "Vcpkg target triplet.")
+	set(VCPKG_TARGET_HOST_TRIPLET "x64-mingw-dynamic" CACHE STRING "Vcpkg target triplet.")
 endif()
 
 if(LTRACE)
