@@ -3,4 +3,3 @@ log.txt
 .cache/
 .ccls-cache/
 .vscode/
-plugins/node_modules/
