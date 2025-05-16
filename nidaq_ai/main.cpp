@@ -96,10 +96,7 @@ void AIDaq::setupDetectors()
 	mulex::mxstring<512> apd1_hc = rdb["/user/signals/apd1_signal/hardware_channel"];
 
 	std::string cname = _daq.createAnalogInputChannel("dcs_analog", apd0_hc.c_str(), -10.0, 10.0, "apd0_signal");
-	registerEvent("aidaq::" + cname);
-
 	cname = _daq.createAnalogInputChannel("dcs_analog", apd1_hc.c_str(), -10.0, 10.0, "apd1_signal");
-	registerEvent("aidaq::" + cname);
 }
 
 void AIDaq::setupClinometer()
@@ -110,11 +107,9 @@ void AIDaq::setupClinometer()
 	mulex::mxstring<512> cliy_hc = rdb["/user/signals/clinometery/hardware_channel"];
 
 	std::string cname = _daq.createAnalogInputChannel("dcs_analog", clix_hc.c_str(), 0.0, 5.0, "clinometerx", DAQmx_Val_RSE);
-	registerEvent("aidaq::" + cname);
 	channelDoWork(cname, [this](const auto& data) { calculateClinometerAngle(data, _cli_anglex); });
 
 	cname = _daq.createAnalogInputChannel("dcs_analog", cliy_hc.c_str(), 0.0, 5.0, "clinometery", DAQmx_Val_RSE);
-	registerEvent("aidaq::" + cname);
 	channelDoWork(cname, [this](const auto& data) { calculateClinometerAngle(data, _cli_angley); });
 
 	rdb["/user/anglex"].create(mulex::RdbValueType::FLOAT64, 0.0);
@@ -134,7 +129,6 @@ void AIDaq::setupPiraniGauges()
 		rdb[key].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("Dev1/ai" + std::to_string(i + 4)));
 		const mulex::mxstring<512> channel = rdb[key];
 		std::string cname = _daq.createAnalogInputChannel("dcs_analog", channel.c_str(), 0.0, 10.0, name.c_str(), DAQmx_Val_RSE);
-		registerEvent("aidaq::" + cname);
 		channelDoWork(cname, [this, i](const auto& data) {
 			calculatePiraniPressure(data, _pirani_mbar[i]);
 		});
@@ -194,7 +188,6 @@ void AIDaq::dispatchChannelEvents(TaskHandle task, std::vector<double> data, std
 		auto span = std::span<double>(data.data() + start, NIDaq::SAMPLES_PER_CHANNEL);
 		CopyDoubleVectorToBytes(span, buffer, sizeof(std::uint64_t));
 		auto channel_alias = _daq.getChannelAlias(channel);
-		dispatchEvent("aidaq::" + channel_alias.value_or(channel), buffer);
 		start += NIDaq::SAMPLES_PER_CHANNEL;
 
 		auto worker = _workers.find(channel_alias.value_or(channel));
