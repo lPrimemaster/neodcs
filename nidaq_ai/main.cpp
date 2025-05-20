@@ -11,19 +11,21 @@ public:
 	AIDaq(int argc, char* argv[]);
 	~AIDaq();
 
-	using ChannelWorker = std::function<void(const std::span<double>&)>;
+	using ChannelWorker = std::function<void(const std::span<double>&, const std::int64_t)>;
 
 	// Pass by value is important here. Do not modify
-	void dispatchChannelEvents(TaskHandle task, std::vector<double> data, std::uint64_t timestamp, uInt32 nchannels);
+	void dispatchChannelWork(TaskHandle task, std::vector<double> data, std::int64_t timestamp, uInt32 nchannels);
 	void channelDoWork(const std::string& channel, const ChannelWorker& f);
 
 	void calculateClinometerAngle(const std::span<double>& data, std::atomic<double>& out);
 	void calculatePiraniPressure(const std::span<double>& data, std::atomic<double>& out);
+	void dispatchDetectorReadout(const std::span<double>& data, const std::int64_t timestamp, const std::string& evt);
 
 	void setupClinometer();
 	void setupDetectors();
 	void setupPiraniGauges();
 
+	void setupGenericSignal(const std::string& name, const std::string& channel, double min, double max, const ChannelWorker& worker, int type = DAQmx_Val_RSE);
 private:
 	NIDaq _daq;
 	std::map<std::string, ChannelWorker> _workers;
@@ -69,7 +71,7 @@ static int32 NIVoltageCallback(TaskHandle task, int32 everyNsamplesEventType, uI
 	if(samplesRead > 0)
 	{
 		// Dispatch each channel event
-		instance->deferExec([instance, nchannels, task, timestamp]() { instance->dispatchChannelEvents(task, data, timestamp, nchannels); });
+		instance->deferExec([instance, nchannels, task, timestamp]() { instance->dispatchChannelWork(task, data, timestamp, nchannels); });
 	}
 
 	return 0;
@@ -87,52 +89,48 @@ void AIDaq::calculatePiraniPressure(const std::span<double>& data, std::atomic<d
 	out = std::pow(10, (avg - 6.143) / 1.286);
 }
 
+void AIDaq::dispatchDetectorReadout(const std::span<double>& data, const std::int64_t timestamp, const std::string& evt)
+{
+	static std::vector<std::uint8_t> buffer(NIDaq::SAMPLES_PER_CHANNEL * sizeof(double) + sizeof(std::int64_t));
+	buffer.clear();
+	std::memcpy(buffer.data(), &timestamp, sizeof(std::int64_t));
+	std::memcpy(buffer.data() + sizeof(std::int64_t), data.data(), data.size() * sizeof(double));
+	dispatchEvent(evt, buffer);
+}
+
+void AIDaq::setupGenericSignal(const std::string& name, const std::string& channel, double min, double max, const ChannelWorker& worker, int type)
+{
+	const std::string& hwkey = "/user/signals/" + name + "/hardware_channel";
+	rdb[hwkey].create(mulex::RdbValueType::STRING, mulex::mxstring<512>(channel));
+	mulex::mxstring<512> hwchannel = rdb[hwkey];
+	std::string cname = _daq.createAnalogInputChannel("dcs_analog", hwchannel.c_str(), min, max, name, type);
+	channelDoWork(cname, worker);
+}
+
 void AIDaq::setupDetectors()
 {
-	rdb["/user/signals/apd0_signal/hardware_channel"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("Dev1/ai0"));
-	rdb["/user/signals/apd1_signal/hardware_channel"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("Dev1/ai1"));
-
-	mulex::mxstring<512> apd0_hc = rdb["/user/signals/apd0_signal/hardware_channel"];
-	mulex::mxstring<512> apd1_hc = rdb["/user/signals/apd1_signal/hardware_channel"];
-
-	std::string cname = _daq.createAnalogInputChannel("dcs_analog", apd0_hc.c_str(), -10.0, 10.0, "apd0_signal");
-	cname = _daq.createAnalogInputChannel("dcs_analog", apd1_hc.c_str(), -10.0, 10.0, "apd1_signal");
+	setupGenericSignal("apd0", "Dev/ai0", -10.0, 10.0, [this](const auto& data, const auto& ts) { dispatchDetectorReadout(data, ts, "aidaq::apd0"); });
+	registerEvent("aidaq::apd0");
 }
 
 void AIDaq::setupClinometer()
 {
-	rdb["/user/signals/clinometerx/hardware_channel"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("Dev1/ai1"));
-	rdb["/user/signals/clinometery/hardware_channel"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("Dev1/ai0"));
-	mulex::mxstring<512> clix_hc = rdb["/user/signals/clinometerx/hardware_channel"];
-	mulex::mxstring<512> cliy_hc = rdb["/user/signals/clinometery/hardware_channel"];
-
-	std::string cname = _daq.createAnalogInputChannel("dcs_analog", clix_hc.c_str(), 0.0, 5.0, "clinometerx", DAQmx_Val_RSE);
-	channelDoWork(cname, [this](const auto& data) { calculateClinometerAngle(data, _cli_anglex); });
-
-	cname = _daq.createAnalogInputChannel("dcs_analog", cliy_hc.c_str(), 0.0, 5.0, "clinometery", DAQmx_Val_RSE);
-	channelDoWork(cname, [this](const auto& data) { calculateClinometerAngle(data, _cli_angley); });
+	setupGenericSignal("clinometery", "Dev1/ai2", 0.0, 5.0, [this](const auto& data, const auto& ts) { calculateClinometerAngle(data, _cli_angley); });
+	setupGenericSignal("clinometerx", "Dev1/ai3", 0.0, 5.0, [this](const auto& data, const auto& ts) { calculateClinometerAngle(data, _cli_anglex); });
 
 	rdb["/user/anglex"].create(mulex::RdbValueType::FLOAT64, 0.0);
 	rdb["/user/angley"].create(mulex::RdbValueType::FLOAT64, 0.0);
-
-	rdb["/user/pirani0"].create(mulex::RdbValueType::FLOAT64, 0.0);
-	rdb["/user/pirani1"].create(mulex::RdbValueType::FLOAT64, 0.0);
-	rdb["/user/pirani2"].create(mulex::RdbValueType::FLOAT64, 0.0);
 }
 
 void AIDaq::setupPiraniGauges()
 {
-	for(int i = 0; i < NPIRANI; i++)
-	{
-		const std::string name = "pirani" + std::to_string(i);
-		const std::string key = "/user/signals/" + name + "/hardware_channel";
-		rdb[key].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("Dev1/ai" + std::to_string(i + 4)));
-		const mulex::mxstring<512> channel = rdb[key];
-		std::string cname = _daq.createAnalogInputChannel("dcs_analog", channel.c_str(), 0.0, 10.0, name.c_str(), DAQmx_Val_RSE);
-		channelDoWork(cname, [this, i](const auto& data) {
-			calculatePiraniPressure(data, _pirani_mbar[i]);
-		});
-	}
+	setupGenericSignal("pirani0", "Dev1/ai4", 0.0, 10.0, [this](const auto& data, const auto& ts) { calculatePiraniPressure(data, _pirani_mbar[0]); });
+	setupGenericSignal("pirani1", "Dev1/ai5", 0.0, 10.0, [this](const auto& data, const auto& ts) { calculatePiraniPressure(data, _pirani_mbar[1]); });
+	setupGenericSignal("pirani2", "Dev1/ai6", 0.0, 10.0, [this](const auto& data, const auto& ts) { calculatePiraniPressure(data, _pirani_mbar[2]); });
+
+	rdb["/user/pirani0"].create(mulex::RdbValueType::FLOAT64, 0.0);
+	rdb["/user/pirani1"].create(mulex::RdbValueType::FLOAT64, 0.0);
+	rdb["/user/pirani2"].create(mulex::RdbValueType::FLOAT64, 0.0);
 }
 
 AIDaq::AIDaq(int argc, char* argv[]) : mulex::MxBackend(argc, argv), _daq(&log)
@@ -141,10 +139,11 @@ AIDaq::AIDaq(int argc, char* argv[]) : mulex::MxBackend(argc, argv), _daq(&log)
 	_daq.createTask("dcs_analog");
 	
 	// Generic setup
-	// setupDetectors();
+	setupDetectors();
 	setupClinometer();
 	setupPiraniGauges();
 
+	// Update local variables every half a second
 	deferExec([this]() {
 		rdb["/user/anglex"] = _cli_anglex.load();
 		rdb["/user/angley"] = _cli_angley.load();
@@ -166,34 +165,19 @@ AIDaq::~AIDaq()
 	_daq.stopTask("dcs_analog");
 }
 
-static void CopyDoubleVectorToBytes(const std::span<double>& data, std::vector<uint8_t>& buffer, std::uint64_t offset)
+void AIDaq::dispatchChannelWork(TaskHandle task, std::vector<double> data, std::int64_t timestamp, uInt32 nchannels)
 {
-	if(buffer.size() < data.size() * sizeof(double) + offset)
-	{
-		mulex::LogError("Buffer size too small to copy data.");
-		return;
-	}
-
-	std::memcpy(buffer.data() + offset, data.data(), data.size() * sizeof(double));
-}
-
-void AIDaq::dispatchChannelEvents(TaskHandle task, std::vector<double> data, std::uint64_t timestamp, uInt32 nchannels)
-{
-	static std::vector<std::uint8_t> buffer(sizeof(double) * NIDaq::SAMPLES_PER_CHANNEL + sizeof(std::uint64_t));
-
 	std::uint64_t start = 0;
 	for(const std::string& channel : _daq.getTaskChannels(task))
 	{
-		std::memcpy(buffer.data(), &timestamp, sizeof(std::uint64_t));
 		auto span = std::span<double>(data.data() + start, NIDaq::SAMPLES_PER_CHANNEL);
-		CopyDoubleVectorToBytes(span, buffer, sizeof(std::uint64_t));
 		auto channel_alias = _daq.getChannelAlias(channel);
 		start += NIDaq::SAMPLES_PER_CHANNEL;
 
 		auto worker = _workers.find(channel_alias.value_or(channel));
 		if(worker != _workers.end())
 		{
-			worker->second(span);
+			worker->second(span, timestamp);
 		}
 	}
 }

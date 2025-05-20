@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <type_traits>
 #include <vector>
+#include <mxsystem.h>
 
 struct Serializable;
 
@@ -147,13 +148,59 @@ struct CountEvent : Serializable
 {
 	std::vector<AnalogPeak> peaks;
 	std::uint64_t counts;
-	std::int64_t timestamp; // This is the timestamp at EVALUTATION TIME!
+	std::int64_t acq_timestamp;
 
-	CountEvent(std::vector<AnalogPeak> peaks, std::uint64_t counts, std::int64_t timestamp)
+	// Pressure at chamber points
+	double pressure0;
+	double pressure1;
+	double pressure2;
+	std::int64_t ce_timestamp;
+
+	// Relative inclination
+	double cli_c1_y;
+	double cli_c2_y;
+	double cli_c1_x;
+	double cli_c2_x;
+
+	// Positions
+	double pos_c1;
+	double pos_c2;
+	double pos_det;
+	double pos_tab;
+
+	// Temperature
+	double temp_c1;
+	double temp_c2;
+
+	CountEvent(
+		std::vector<AnalogPeak> peaks,
+		std::uint64_t counts,
+		std::int64_t timestamp,
+		double p0, double p1, double p2,
+		double cc1y, double cc2y,
+		double cc1x, double cc2x,
+		double posc1, double posc2,
+		double posdet, double postab,
+		double tc1, double tc2
+	)
 	{
+		ce_timestamp = mulex::SysGetCurrentTime();
 		peaks = peaks;
 		counts = counts;
-		timestamp = timestamp;
+		acq_timestamp = timestamp;
+		pressure0 = p0;
+		pressure1 = p1;
+		pressure2 = p2;
+		cli_c1_y = cc1y;
+		cli_c2_y = cc2y;
+		cli_c1_x = cc1x;
+		cli_c2_x = cc2x;
+		pos_c1 = posc1;
+		pos_c2 = posc2;
+		pos_det = posdet;
+		pos_tab = postab;
+		temp_c1 = tc1;
+		temp_c2 = tc2;
 	}
 
 	inline virtual std::vector<std::uint8_t> serialize() const override
@@ -161,7 +208,25 @@ struct CountEvent : Serializable
 		std::vector<std::uint8_t> buffer;
 		FromVector(buffer, peaks);
 		FromValue(buffer, counts);
-		FromValue(buffer, timestamp);
+		FromValue(buffer, acq_timestamp);
+		FromValue(buffer, ce_timestamp);
+
+		FromValue(buffer, pressure0);
+		FromValue(buffer, pressure1);
+		FromValue(buffer, pressure2);
+
+		FromValue(buffer, cli_c1_y);
+		FromValue(buffer, cli_c2_y);
+		FromValue(buffer, cli_c1_x);
+		FromValue(buffer, cli_c2_x);
+
+		FromValue(buffer, pos_c1);
+		FromValue(buffer, pos_c2);
+		FromValue(buffer, pos_det);
+		FromValue(buffer, pos_tab);
+
+		FromValue(buffer, temp_c1);
+		FromValue(buffer, temp_c2);
 		return buffer;
 	}
 
@@ -169,7 +234,25 @@ struct CountEvent : Serializable
 	{
 		ToVector(buffer, peaks);
 		ToValue(buffer, counts);
-		ToValue(buffer, timestamp);
+		ToValue(buffer, acq_timestamp);
+		ToValue(buffer, ce_timestamp);
+
+		ToValue(buffer, pressure0);
+		ToValue(buffer, pressure1);
+		ToValue(buffer, pressure2);
+
+		ToValue(buffer, cli_c1_y);
+		ToValue(buffer, cli_c2_y);
+		ToValue(buffer, cli_c1_x);
+		ToValue(buffer, cli_c2_x);
+
+		ToValue(buffer, pos_c1);
+		ToValue(buffer, pos_c2);
+		ToValue(buffer, pos_det);
+		ToValue(buffer, pos_tab);
+
+		ToValue(buffer, temp_c1);
+		ToValue(buffer, temp_c2);
 	}
 };
 

@@ -18,7 +18,10 @@ public:
 
 	~GZipCompressor()
 	{
-		close();
+		if(is_open)
+		{
+			close();
+		}
 	}
 
 	bool open(const std::string& filename)
@@ -36,6 +39,7 @@ public:
 
 	void close()
 	{
+		is_open = false;
 		gzclose(_zstream);
 	}
 

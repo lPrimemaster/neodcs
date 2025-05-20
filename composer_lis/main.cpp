@@ -2,13 +2,16 @@
 // Author : César Godinho
 //   Date : 24/01/2025
 
+#include <chrono>
 #include <cstdint>
+#include <filesystem>
 #include <mxbackend.h>
 #include <mxtypes.h>
 #include <numeric>
+#include <string>
 #include <thread>
 #include "../types.h"
-#include "../common/math.h"
+#include "../common/compressor.h"
 
 class Composer : public mulex::MxBackend
 {
@@ -19,12 +22,21 @@ public:
 	ADCBuffer convertEventData(const std::vector<std::uint8_t>& data);
 	ADCBuffer smoothWaveform(const ADCBuffer& data, std::uint64_t window);
 	std::vector<AnalogPeak> findAnalogPeaks(const ADCBuffer& data, double height, std::uint64_t width);
+	std::tuple<double, double, double, double> getPositions();
 
 	void startMeasurement(std::uint64_t runno);
 	void stopMeasurement(std::uint64_t runno);
 
-	double clinometerIncrementAverage(double value, double& average, std::uint64_t& n);
-	double clinometerReadAverage(double& average, std::uint64_t& n);
+	void startWriteThread(std::uint64_t runno);
+	void stopWriteThread();
+
+	std::string getOutputFilename(std::uint64_t runno);
+	void writeHeader(std::uint64_t runno);
+
+	void writeEventToDisk(const CountEvent& event);
+
+private:
+	static constexpr std::uint64_t WRITE_INTERVAL = 5000;
 
 private:
 	std::uint64_t _cps;
@@ -32,39 +44,17 @@ private:
 	std::uint64_t _width_thr;
 	std::uint64_t _avg_window;
 
-	std::mutex    _clinometer_mtx;
-	double 	      _clinometer0_x;
-	std::uint64_t _clinometer0_x_n;
+	std::mutex _events_mtx;
+	std::stack<CountEvent> _events;
 
-	double 	      _clinometer0_y;
-	std::uint64_t _clinometer0_y_n;
+	std::unique_ptr<std::thread> _write_thread;
+	std::atomic<bool> _write_thread_run;
+	bool _write_compressed;
+	std::ofstream _write_output;
+	GZipCompressor _write_output_compressed;
+	std::string _output_dir;
+	std::string _output_prefix;
 };
-
-double Composer::clinometerIncrementAverage(double value, double& average, std::uint64_t& n)
-{
-	std::unique_lock lock(_clinometer_mtx);
-	average *= n;
-	average += value;
-	average /= ++n;
-	return average;
-}
-
-double Composer::clinometerReadAverage(double& average, std::uint64_t& n)
-{
-	std::unique_lock lock(_clinometer_mtx);
-	double out = average;
-	average = 0.0;
-	n = 0;
-	return out;
-}
-
-static double ClinometerVoltageToDeg(double value)
-{
-	// [0, 5] -> [-10, 10]
-	constexpr double gain = 4.0;
-	constexpr double bias = -10.0;
-	return value * gain + bias;
-}
 
 Composer::Composer(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
 {
@@ -73,6 +63,11 @@ Composer::Composer(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
 	rdb["/user/composer/detection_thr/ma_window"].create(mulex::RdbValueType::UINT64, std::uint64_t(0)); // moving average window size
 	
 	rdb["/user/composer/cps"].create(mulex::RdbValueType::UINT64, std::uint64_t(0));
+	rdb["/user/table_pos"].create(mulex::RdbValueType::FLOAT64, 0.0);
+	rdb["/user/composer/output"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("output/"));
+	rdb["/user/composer/output_prefix"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("dcs_measurement"));
+	_output_dir = static_cast<mulex::mxstring<512>>(rdb["/user/composer/output"]).c_str();
+	_output_prefix = static_cast<mulex::mxstring<512>>(rdb["/user/composer/output_prefix"]).c_str();
 
 	_height_thr = rdb["/user/composer/detection_thr/height"];
 	_width_thr = rdb["/user/composer/detection_thr/width"];
@@ -88,17 +83,21 @@ Composer::Composer(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
 		deferExec([this, value]() { _avg_window = value; }); // avoid thread races
 	});
 
+	registerEvent("composer::count");
+
 	// Estimate raw counts per second on the rdb
 	deferExec([this]() {
 		rdb["/user/composer/cps"] = _cps;
 		_cps = 0;
 	}, 0, 1000);
 
-	registerEvent("composer::count");
+	// Setup dependencies
+	registerDependency("esp301.exe").onFail(mulex::MxRexDependencyManager::LOG_WARN);
+	registerDependency("aidaq.exe").onFail(mulex::MxRexDependencyManager::LOG_WARN);
 
 	registerRunStartStop(&Composer::startMeasurement, &Composer::stopMeasurement);
 
-	subscribeEvent("aidaq::apd0_signal", [this](const auto* data, auto len, const auto* udata) {
+	subscribeEvent("aidaq::apd0", [this](const auto* data, auto len, const auto* udata) {
 		ADCBuffer buffer = convertEventData(std::vector<uint8_t>(data, data + len));
 		deferExec([this, buffer]() {
 			ADCBuffer waveform;
@@ -112,68 +111,245 @@ Composer::Composer(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
 			}
 
 			std::vector<AnalogPeak> peaks = findAnalogPeaks(waveform, _height_thr, _width_thr);
-
 			if(peaks.size() > 0)
 			{
 				// Found peaks on APD 0!
 				// Issue count events
-				CountEvent event(peaks, peaks.size(), mulex::SysGetCurrentTime());
-				std::vector<std::uint8_t> event_buffer = event.serialize();
-				mulex::LogDebug("Peaks found: %llu. Buffer size: %llu.", peaks.size(), event_buffer.size());
-				dispatchEvent("composer::count", event_buffer);
+
+				auto [c1pos, c2pos, detpos, tabpos] = getPositions();
+
+				CountEvent event(
+					peaks, 									   // waveform
+					peaks.size(), 							   // counts
+					buffer.soft_timestamp,					   // acquisition ts
+					
+					static_cast<double>(rdb["/user/pirani0"]), // pressure 0
+					static_cast<double>(rdb["/user/pirani1"]), // pressure 1
+					static_cast<double>(rdb["/user/pirani2"]), // pressure 2
+					
+					// TODO: (Cesar) Check what we have and were it is
+					static_cast<double>(rdb["/user/angley"]),  // clinometer c1y
+					0.0,									   // clinometer c2y
+					static_cast<double>(rdb["/user/anglex"]),  // clinometer c1x
+					0.0,									   // clinometer c2x
+					
+					c1pos,									   // C1 position
+					c2pos,									   // C2 position
+					detpos,									   // Detector position
+					tabpos,									   // Table position
+
+					0.0,									   // C1 temperature
+					0.0										   // C2 temperature
+				);
+
+				{
+					std::unique_lock lock(_events_mtx);
+					_events.push(event);
+				}
+
+				dispatchEvent("composer::count", event.serialize());
+				mulex::LogDebug("Peaks found: %llu.", peaks.size());
 				_cps += peaks.size();
 			}
-
-			// mulex::LogDebug("maw: %llu | w: %llu | h: %lf", _avg_window, _width_thr, _height_thr);
 		});
 	});
-
-	rdb["/user/clinometer/0/x"].create(mulex::RdbValueType::FLOAT64, 0.0);
-	rdb["/user/clinometer/0/y"].create(mulex::RdbValueType::FLOAT64, 0.0);
-
-	subscribeEvent("aidaq::clinometerx", [this](const auto* data, auto len, const auto* udata) {
-		ADCBuffer buffer = convertEventData(std::vector<uint8_t>(data, data + len));
-
-		// Try and use the rdb
-		// rdb["/user/clinometer/0/x"] = ClinometerVoltageToDeg(MathAverageArray(buffer.waveform));
-		clinometerIncrementAverage(ClinometerVoltageToDeg(MathAverageArray(buffer.waveform)), _clinometer0_x, _clinometer0_x_n);
-	});
-
-	subscribeEvent("aidaq::clinometery", [this](const auto* data, auto len, const auto* udata) {
-		ADCBuffer buffer = convertEventData(std::vector<uint8_t>(data, data + len));
-
-		// Try and use the rdb
-		// rdb["/user/clinometer/0/y"] = ClinometerVoltageToDeg(MathAverageArray(buffer.waveform));
-		clinometerIncrementAverage(ClinometerVoltageToDeg(MathAverageArray(buffer.waveform)), _clinometer0_y, _clinometer0_y_n);
-	});
-
-	// Average over 500 ms
-	deferExec([this](){
-		if(_clinometer0_x_n > 0) rdb["/user/clinometer/0/x"] = clinometerReadAverage(_clinometer0_x, _clinometer0_x_n);
-		if(_clinometer0_y_n > 0) rdb["/user/clinometer/0/y"] = clinometerReadAverage(_clinometer0_y, _clinometer0_y_n);
-	}, 0, 500);
 }
 
 Composer::~Composer()
 {
+	stopWriteThread();
 }
 
 void Composer::startMeasurement(std::uint64_t runno)
 {
+	// Clear events, even tho they should be empty at this point
+	_events = std::stack<CountEvent>();
+	startWriteThread(runno);
 }
 
 void Composer::stopMeasurement(std::uint64_t runno)
 {
+	stopWriteThread();
+	log.info("Stop OK.");
+}
+
+std::string Composer::getOutputFilename(std::uint64_t runno)
+{
+	auto now = std::time(nullptr);
+	auto now_lt = *std::localtime(&now);
+
+	std::ostringstream oss;
+	oss << std::put_time(&now_lt, "%d-%m-%Y_%H-%M-%S");
+	std::string datetime = oss.str();
+	std::string output_file =
+		_output_dir + "/" +
+		_output_prefix + "_" +
+		datetime + "run_" +
+		std::to_string(runno) + (_write_compressed ? ".csv.gzip" : ".csv");
+	return output_file;
+}
+
+void Composer::writeHeader(std::uint64_t runno)
+{
+	auto now = std::time(nullptr);
+	auto now_lt = *std::localtime(&now);
+	std::ostringstream oss;
+	oss << std::put_time(&now_lt, "%d-%m-%Y_%H-%M-%S");
+	std::string datetime = oss.str();
+
+	std::string header = 
+		"# File generated by Composer\n"
+		"# Timestamp  : " + datetime + "\n"
+		"# Run number : " + std::to_string(runno) + "\n"
+		"# Measurement: " + _output_prefix + "\n"
+		"\n"
+		"counts,acq_timestamp,ce_timestamp,"
+		"pressure0,pressure1,pressure2,"
+		"cli_c1_y,cli_c2_y,cli_c1_x,cli_c2_x,"
+		"pos_c1,pos_c2,pos_det,pos_tab,"
+		"temp_c1,temp_c2\n"
+	;
+
+	if(_write_compressed)
+	{
+		_write_output_compressed.write(header);
+	}
+	else
+	{
+		_write_output << header << std::flush;
+	}
+}
+
+void Composer::writeEventToDisk(const CountEvent& event)
+{
+	std::string line = 
+		std::to_string(event.counts) + "," +
+		std::to_string(event.acq_timestamp) + "," +
+		std::to_string(event.ce_timestamp) + "," +
+		std::to_string(event.pressure0) + "," +
+		std::to_string(event.pressure1) + "," +
+		std::to_string(event.pressure2) + "," +
+		std::to_string(event.cli_c1_y) + "," +
+		std::to_string(event.cli_c2_y) + "," +
+		std::to_string(event.cli_c1_x) + "," +
+		std::to_string(event.cli_c2_x) + "," +
+		std::to_string(event.pos_c1) + "," +
+		std::to_string(event.pos_c2) + "," +
+		std::to_string(event.pos_det) + "," +
+		std::to_string(event.pos_tab) + "," +
+		std::to_string(event.temp_c1) + "," +
+		std::to_string(event.temp_c2) + "\n";
+
+	if(_write_compressed)
+	{
+		_write_output_compressed.write(line);
+	}
+	else
+	{
+		_write_output << line << std::flush;
+	}
+}
+
+void Composer::startWriteThread(std::uint64_t runno)
+{
+	_write_thread_run.store(true);
+	_write_thread = std::make_unique<std::thread>([this, runno]() {
+		// Open output
+		std::string output_file = getOutputFilename(runno);
+
+		if(!std::filesystem::exists(_output_dir))
+		{
+			if(!std::filesystem::create_directory(_output_dir))
+			{
+				log.error("Failed to create directory: %s", _output_dir.c_str());
+				return;
+			}
+		}
+
+		if(std::filesystem::exists(output_file))
+		{
+			log.error("File %s already exists.", output_file.c_str());
+			log.error("Stopping write thread to avoid overwrite.");
+			return;
+		}
+
+		if(_write_compressed)
+		{
+			if(!_write_output_compressed.open(output_file))
+			{
+				log.error("Failed to open output file. (%s)", output_file.c_str());
+				return;
+			}
+		}
+		else
+		{
+			_write_output.open(output_file);
+			if(!_write_output.is_open())
+			{
+				log.error("Failed to open output file. (%s)", output_file.c_str());
+				return;
+			}
+		}
+
+		log.info("Output started.");
+		log.info("Logging data to: %s", output_file.c_str());
+		log.info("Write check interval: %llu ms.", WRITE_INTERVAL);
+
+		writeHeader(runno);
+		
+		// Loop
+		while(_write_thread_run)
+		{
+			// No need to use cv's
+			// Just sporadicaly wakeup
+			{
+				std::unique_lock lock(_events_mtx);
+				while(!_events.empty())
+				{
+					writeEventToDisk(_events.top());
+					_events.pop();
+				}
+			}
+
+			std::this_thread::sleep_for(std::chrono::milliseconds(WRITE_INTERVAL));
+		}
+
+		// We are stopping, empty last events
+		std::unique_lock lock(_events_mtx);
+		while(!_events.empty())
+		{
+			writeEventToDisk(_events.top());
+			_events.pop();
+		}
+
+		// Close output
+		if(_write_compressed)
+		{
+			_write_output_compressed.close();
+		}
+		else
+		{
+			_write_output.close();
+		}
+	});
+}
+
+void Composer::stopWriteThread()
+{
+	_write_thread_run.store(false);
+	if(_write_thread && _write_thread->joinable())
+	{
+		_write_thread->join();
+		_write_thread.reset();
+	}
 }
 
 ADCBuffer Composer::convertEventData(const std::vector<std::uint8_t>& data)
 {
 	ADCBuffer buffer;
-
 	std::memcpy(&buffer.soft_timestamp, data.data(), sizeof(std::int64_t));
-	buffer.waveform.resize((data.size() / sizeof(double)) - 1); // Given sizeof(std::int64_t) == sizeof(double)
+	buffer.waveform.resize(((data.size() - sizeof(std::int64_t)) / sizeof(double)));
 	std::memcpy(buffer.waveform.data(), data.data() + sizeof(std::int64_t), buffer.waveform.size() * sizeof(double));
-
 	return buffer;
 }
 
@@ -226,6 +402,21 @@ std::vector<AnalogPeak> Composer::findAnalogPeaks(const ADCBuffer& data, double 
 		}
 	}
 	return output;
+}
+
+std::tuple<double, double, double, double> Composer::getPositions()
+{
+	// This is a get command for the esp301.exe
+	// TODO: (Cesar) Make public the Command interface so we can use it here
+	std::uint8_t cmd = 0;
+
+	// WARN: (Cesar) Omitting error checking!
+	return std::make_tuple(
+		std::get<1>(callUserRpc<double>("esp301.exe", CallTimeout(1000), std::uint8_t(0), cmd)), // c1
+		std::get<1>(callUserRpc<double>("esp301.exe", CallTimeout(1000), std::uint8_t(1), cmd)), // c2
+		std::get<1>(callUserRpc<double>("esp301.exe", CallTimeout(1000), std::uint8_t(2), cmd)), // det
+		static_cast<double>(rdb["/user/table_pos"])
+	);
 }
 
 int main(int argc, char* argv[])
