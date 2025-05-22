@@ -88,9 +88,11 @@ Esp301::Esp301(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
 	writeCommand("2VA5", false);
 	writeCommand("3VA5", false);
 
+	log.info("OK.");
+
 	std::string v1 = writeCommand("1VA?", true);
-	std::string v2 = writeCommand("1VA?", true);
-	std::string v3 = writeCommand("1VA?", true);
+	std::string v2 = writeCommand("2VA?", true);
+	std::string v3 = writeCommand("3VA?", true);
 
 	mulex::LogDebug("Axis 1 velocity: %s", v1.c_str());
 	mulex::LogDebug("Axis 2 velocity: %s", v2.c_str());

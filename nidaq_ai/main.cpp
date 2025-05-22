@@ -92,7 +92,6 @@ void AIDaq::calculatePiraniPressure(const std::span<double>& data, std::atomic<d
 void AIDaq::dispatchDetectorReadout(const std::span<double>& data, const std::int64_t timestamp, const std::string& evt)
 {
 	static std::vector<std::uint8_t> buffer(NIDaq::SAMPLES_PER_CHANNEL * sizeof(double) + sizeof(std::int64_t));
-	buffer.clear();
 	std::memcpy(buffer.data(), &timestamp, sizeof(std::int64_t));
 	std::memcpy(buffer.data() + sizeof(std::int64_t), data.data(), data.size() * sizeof(double));
 	dispatchEvent(evt, buffer);
@@ -100,16 +99,13 @@ void AIDaq::dispatchDetectorReadout(const std::span<double>& data, const std::in
 
 void AIDaq::setupGenericSignal(const std::string& name, const std::string& channel, double min, double max, const ChannelWorker& worker, int type)
 {
-	const std::string& hwkey = "/user/signals/" + name + "/hardware_channel";
-	rdb[hwkey].create(mulex::RdbValueType::STRING, mulex::mxstring<512>(channel));
-	mulex::mxstring<512> hwchannel = rdb[hwkey];
-	std::string cname = _daq.createAnalogInputChannel("dcs_analog", hwchannel.c_str(), min, max, name, type);
+	std::string cname = _daq.createAnalogInputChannel("dcs_analog", channel, min, max, name, type);
 	channelDoWork(cname, worker);
 }
 
 void AIDaq::setupDetectors()
 {
-	setupGenericSignal("apd0", "Dev/ai0", -10.0, 10.0, [this](const auto& data, const auto& ts) { dispatchDetectorReadout(data, ts, "aidaq::apd0"); });
+	setupGenericSignal("apd0", "Dev1/ai0", -10.0, 10.0, [this](const auto& data, const auto& ts) { dispatchDetectorReadout(data, ts, "aidaq::apd0"); });
 	registerEvent("aidaq::apd0");
 }
 

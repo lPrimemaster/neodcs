@@ -63,7 +63,6 @@ Composer::Composer(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
 	rdb["/user/composer/detection_thr/ma_window"].create(mulex::RdbValueType::UINT64, std::uint64_t(0)); // moving average window size
 	
 	rdb["/user/composer/cps"].create(mulex::RdbValueType::UINT64, std::uint64_t(0));
-	rdb["/user/table_pos"].create(mulex::RdbValueType::FLOAT64, 0.0);
 	rdb["/user/composer/output"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("output/"));
 	rdb["/user/composer/output_prefix"].create(mulex::RdbValueType::STRING, mulex::mxstring<512>("dcs_measurement"));
 	_output_dir = static_cast<mulex::mxstring<512>>(rdb["/user/composer/output"]).c_str();
@@ -94,6 +93,7 @@ Composer::Composer(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
 	// Setup dependencies
 	registerDependency("esp301.exe").onFail(mulex::MxRexDependencyManager::LOG_WARN);
 	registerDependency("aidaq.exe").onFail(mulex::MxRexDependencyManager::LOG_WARN);
+	registerDependency("runcont.exe").onFail(mulex::MxRexDependencyManager::LOG_WARN);
 
 	registerRunStartStop(&Composer::startMeasurement, &Composer::stopMeasurement);
 
@@ -142,6 +142,7 @@ Composer::Composer(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
 					0.0										   // C2 temperature
 				);
 
+				if(_write_thread_run.load())
 				{
 					std::unique_lock lock(_events_mtx);
 					_events.push(event);
@@ -415,7 +416,7 @@ std::tuple<double, double, double, double> Composer::getPositions()
 		std::get<1>(callUserRpc<double>("esp301.exe", CallTimeout(1000), std::uint8_t(0), cmd)), // c1
 		std::get<1>(callUserRpc<double>("esp301.exe", CallTimeout(1000), std::uint8_t(1), cmd)), // c2
 		std::get<1>(callUserRpc<double>("esp301.exe", CallTimeout(1000), std::uint8_t(2), cmd)), // det
-		static_cast<double>(rdb["/user/table_pos"])
+		static_cast<double>(rdb["/user/runcont/table/position"])
 	);
 }
 

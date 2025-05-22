@@ -27,7 +27,7 @@ macro(generate_paris)
 	add_subdirectory(nidaq_ci)  	# NI CI controller
 	add_subdirectory(temperature)	# Crystal temperature readout
 	add_subdirectory(composer_par)  # File writer / Online analysis
-	add_subdirectory(runcont)		# Run control
+	add_subdirectory(runcont_par)	# Run control
 	add_subdirectory(onl_analyzer)  # Online analyzer
 endmacro()
 
@@ -35,7 +35,7 @@ macro(generate_lisbon)
 	add_subdirectory(esp301)   	   	# ESP301 engine control
 	add_subdirectory(nidaq_ai) 	   	# NI AI controller
 	add_subdirectory(composer_lis) 	# File writer / Online analysis
-	add_subdirectory(runcont)	   	# Run control
+	add_subdirectory(runcont_lis)	# Run control
 	add_subdirectory(onl_analyzer)  # Online analyzer
 	add_subdirectory(axas_mca)		# MCA data gathering
 	add_subdirectory(pmc8742)		# Piezo tilt controller
