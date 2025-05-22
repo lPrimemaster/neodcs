@@ -419,7 +419,7 @@ ADCBuffer Composer::smoothWaveform(const ADCBuffer& data, std::uint64_t window)
 std::vector<AnalogPeak> Composer::findAnalogPeaks(const ADCBuffer& data, double height, std::uint64_t width)
 {
 	std::vector<AnalogPeak> output;
-	for(std::uint64_t i = 0; i < data.waveform.size() - 1; i++)
+	for(std::uint64_t i = 1; i < data.waveform.size() - 1; i++)
 	{
 		if(data.waveform[i] > data.waveform[i - 1] && data.waveform[i] > data.waveform[i + 1])
 		{
