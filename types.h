@@ -3,6 +3,7 @@
 #include <type_traits>
 #include <vector>
 #include <mxsystem.h>
+#include <cmath>
 
 struct Serializable;
 
@@ -172,6 +173,12 @@ struct CountEvent : Serializable
 	double temp_c1;
 	double temp_c2;
 
+	// Wobble
+	double wobble_c1_x;
+	double wobble_c1_y;
+	double wobble_c2_x;
+	double wobble_c2_y;
+
 	CountEvent(
 		std::vector<AnalogPeak> peaks,
 		std::uint64_t counts,
@@ -181,7 +188,9 @@ struct CountEvent : Serializable
 		double cc1x, double cc2x,
 		double posc1, double posc2,
 		double posdet, double postab,
-		double tc1, double tc2
+		double tc1, double tc2,
+		double wc1x, double wc2x,
+		double wc1y, double wc2y
 	)
 	{
 		ce_timestamp = mulex::SysGetCurrentTime();
@@ -201,6 +210,10 @@ struct CountEvent : Serializable
 		pos_tab = postab;
 		temp_c1 = tc1;
 		temp_c2 = tc2;
+		wobble_c1_x = wc1x;
+		wobble_c1_y - wc1y;
+		wobble_c2_x = wc2x;
+		wobble_c2_y - wc2y;
 	}
 
 	inline virtual std::vector<std::uint8_t> serialize() const override
@@ -227,6 +240,11 @@ struct CountEvent : Serializable
 
 		FromValue(buffer, temp_c1);
 		FromValue(buffer, temp_c2);
+
+		FromValue(buffer, wobble_c1_x);
+		FromValue(buffer, wobble_c2_x);
+		FromValue(buffer, wobble_c1_y);
+		FromValue(buffer, wobble_c2_y);
 		return buffer;
 	}
 
@@ -253,6 +271,11 @@ struct CountEvent : Serializable
 
 		ToValue(buffer, temp_c1);
 		ToValue(buffer, temp_c2);
+
+		ToValue(buffer, wobble_c1_x);
+		ToValue(buffer, wobble_c2_x);
+		ToValue(buffer, wobble_c1_y);
+		ToValue(buffer, wobble_c2_y);
 	}
 };
 
@@ -292,3 +315,43 @@ struct ComposerOutputList
 	double		  temp_c2;
 };
 
+// Wobble Table
+class WobbleTable
+{
+public:
+	WobbleTable(
+		const std::vector<double>& r,
+		const std::vector<double>& x,
+		const std::vector<double>& y
+	) : _r(r), _x(x), _y(y)
+	{
+		_valid = (x.size() == y.size() && x.size() == r.size() && !r.empty());
+		_lindex = _r.size() - 1;
+	}
+
+	WobbleTable() : _valid(false) { }
+
+	std::pair<double, double> interp(double r)
+	{
+		if(!_valid) return { 0, 0 };
+
+		if(r <= _r[0]) return { _x[0], _y[0] };
+		if(r >= _r[_lindex]) return { _x[_lindex], _y[_lindex] };
+
+		const std::ptrdiff_t idx = std::distance(_r.begin(), std::lower_bound(_r.begin(), _r.end(), r));
+
+		const double r0 = _r[idx - 1];
+		const double r1 = _r[idx];
+		const double factor = (r - r0) / (r1 - r0);
+
+		return {
+			std::lerp(_x[idx - 1], _x[idx], factor),
+			std::lerp(_y[idx - 1], _y[idx], factor)	
+		};
+	}
+
+private:
+	std::vector<double> _r, _x, _y;
+	bool _valid;
+	std::uint64_t _lindex;
+};

@@ -25,7 +25,6 @@ enum class RunContStatus : std::int32_t
 };
 
 #define SM(x) { RunContStatus::x, #x }
-
 static std::map<RunContStatus, std::string> _status_lookup = {
 	SM(STARTING),
 	SM(STOPPING),
@@ -33,7 +32,6 @@ static std::map<RunContStatus, std::string> _status_lookup = {
 	SM(STOPPED),
 	SM(ABORTED)
 };
-
 #undef SM
 
 class RunCont : public mulex::MxBackend
@@ -50,13 +48,21 @@ private:
 	void measureAnti();
 	void measurePara();
 
-	void calculateWobble();
+	void calculateWobbleProfileLookup();
 
 	bool checkEnginesStartPositions();
 
 	void startMeasurement(std::uint64_t runno);
 	void stopMeasurement(std::uint64_t runno);
 	void setRunStatus(const RunContStatus& status);
+
+	void moveC1Abs(double to);
+	void moveC2Abs(double to);
+	void moveDEAbs(double to);
+
+	double getC1Pos();
+	double getC2Pos();
+	double getDEPos();
 
 private:
 	RunContMode   				 _mode;
@@ -94,6 +100,9 @@ RunCont::RunCont(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
 		imode = std::clamp(imode, 0, 1);
 		_mode = static_cast<RunContMode>(imode);
 	});
+
+	registerEvent("runcont::wtable_c1");
+	registerEvent("runcont::wtable_c2");
 }
 
 bool RunCont::setupStart()
@@ -106,10 +115,9 @@ bool RunCont::setupStart()
 
 	log.info("Setup start. C1 = %.3lf, C2 = %.3lf, Table = %.3lf", c1pos, c2pos, tapos);
 
-	std::uint8_t cmd = 1;
-	callUserRpc("esp301.exe", CallTimeout(1000), std::uint8_t(0), cmd, c1pos); // c1
-	callUserRpc("esp301.exe", CallTimeout(1000), std::uint8_t(1), cmd, c2pos); // c2
-	callUserRpc("esp301.exe", CallTimeout(1000), std::uint8_t(2), cmd, tapos); // det
+	moveC1Abs(c1pos);
+	moveC2Abs(c2pos);
+	moveDEAbs(tapos);
 
 	constexpr std::int64_t timeout = 60000; // 2 minutes timeout
 
@@ -118,7 +126,7 @@ bool RunCont::setupStart()
 	std::int64_t tp = mulex::SysGetCurrentTime();
 
 	// TODO: (Cesar) Read a file with wobble because we are poor (still)
-	// calculateWobble();
+	// calculateWobbleProfileLookup();
 
 	while(true)
 	{
@@ -179,7 +187,7 @@ void RunCont::measureAnti()
 
 			// Move to next
 			setpoint += inc;
-			callUserRpc("esp301.exe", CallTimeout(1000), std::uint8_t(1), std::uint8_t(1), setpoint); // c2
+			moveC2Abs(setpoint);
 			// NOTE: (Cesar) Moving time is included in the tpb.
 			// 				 The composer logs this on the listmode output.
 			// 				 Here we also assume the drift is negligible
@@ -284,6 +292,106 @@ void RunCont::stopMeasurement(std::uint64_t runno)
 	setRunStatus(RunContStatus::STOPPING);
 	log.warn("Received run stop command. Stopping run as is.");
 	setRunStatus(RunContStatus::STOPPED);
+}
+
+void RunCont::moveC1Abs(double to)
+{
+	callUserRpc("esp301.exe", CallTimeout(1000), std::uint8_t(0), std::uint8_t(1), to); // c1
+}
+
+double RunCont::getC1Pos()
+{
+	return std::get<1>(callUserRpc<double>("esp301.exe", CallTimeout(1000), std::uint8_t(0), std::uint8_t(0))); // c1
+}
+
+double RunCont::getC2Pos()
+{
+	return std::get<1>(callUserRpc<double>("esp301.exe", CallTimeout(1000), std::uint8_t(1), std::uint8_t(0))); // c1
+}
+
+double RunCont::getDEPos()
+{
+	return std::get<1>(callUserRpc<double>("esp301.exe", CallTimeout(1000), std::uint8_t(2), std::uint8_t(0))); // c1
+}
+
+void RunCont::moveC2Abs(double to)
+{
+	callUserRpc("esp301.exe", CallTimeout(1000), std::uint8_t(1), std::uint8_t(1), to); // c2
+}
+
+void RunCont::moveDEAbs(double to)
+{
+	callUserRpc("esp301.exe", CallTimeout(1000), std::uint8_t(2), std::uint8_t(1), to); // det
+}
+
+void RunCont::calculateWobbleProfileLookup()
+{
+	moveC1Abs(0.0);
+	moveC2Abs(0.0);
+
+	double c1p = getC1Pos();
+	double c2p = getC2Pos();
+
+	// Use an epsilon if this poses a problem
+	// WARN: (Cesar) No timeout
+	while(c1p != 0.0 && c2p != 0.0)
+	{
+		c1p = getC1Pos();
+		c2p = getC2Pos();
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	}
+
+	// =======================
+	// Calculate wobble for C1
+	// =======================
+	moveC1Abs(360.0);
+	c1p = getC1Pos();
+
+	std::vector<double> r, x, y;
+	auto sendTableData = [&](const std::string& evt) {
+		std::vector<std::uint8_t> buffer(r.size() * 3 * sizeof(double));
+		std::memcpy(buffer.data(), r.data(), r.size() * sizeof(double));
+		std::memcpy(buffer.data() + buffer.size() / 3, x.data(), x.size() * sizeof(double));
+		std::memcpy(buffer.data() + (buffer.size() / 3 * 2), y.data(), y.size() * sizeof(double));
+		dispatchEvent(evt, buffer);
+	};
+
+
+	// Create a table - polling at 10Hz
+	while(c1p < 360.0)
+	{
+		c1p = getC1Pos();
+
+		r.push_back(c1p);
+		x.push_back(static_cast<double>(rdb["/user/anglex"]));
+		y.push_back(static_cast<double>(rdb["/user/angley"]));
+
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	}
+	sendTableData("runcont::wtable_c1");
+
+	// =======================
+	// Calculate wobble for C2
+	// =======================
+	moveC2Abs(360.0);
+	c1p = getC2Pos();
+
+	r.clear();
+	x.clear();
+	y.clear();
+
+	// Create a table - polling at 10Hz
+	while(c2p < 360.0)
+	{
+		c1p = getC2Pos();
+
+		r.push_back(c1p);
+		x.push_back(static_cast<double>(rdb["/user/anglex"]));
+		y.push_back(static_cast<double>(rdb["/user/angley"]));
+
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	}
+	sendTableData("runcont::wtable_c2");
 }
 
 RunCont::~RunCont()

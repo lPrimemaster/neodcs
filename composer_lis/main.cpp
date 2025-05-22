@@ -12,6 +12,7 @@
 #include <thread>
 #include "../types.h"
 #include "../common/compressor.h"
+#include "../common/utils.h"
 
 class Composer : public mulex::MxBackend
 {
@@ -54,6 +55,9 @@ private:
 	GZipCompressor _write_output_compressed;
 	std::string _output_dir;
 	std::string _output_prefix;
+
+	WobbleTable _wobble_c1;
+	WobbleTable _wobble_c2;
 };
 
 Composer::Composer(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
@@ -97,6 +101,26 @@ Composer::Composer(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
 
 	registerRunStartStop(&Composer::startMeasurement, &Composer::stopMeasurement);
 
+	auto calcWobbleTable = [this](const auto* data, auto len) -> auto {
+		std::vector<std::uint8_t> buffer(data, data + len);
+
+		const std::uint64_t table_size = buffer.size() / 3;
+		std::vector<double> r(table_size / sizeof(double));
+		std::vector<double> x(table_size / sizeof(double));
+		std::vector<double> y(table_size / sizeof(double));
+
+		return std::tuple{ r, x, y };
+	};
+
+	subscribeEvent("runcont::wtable_c1", [this, calcWobbleTable](const auto* data, auto len, const auto* udata) {
+		auto [r, x, y] = calcWobbleTable(data, len);
+		deferExec([this, r, x, y]() { _wobble_c1 = WobbleTable(r, x, y); });
+	});
+	subscribeEvent("runcont::wtable_c2", [this, calcWobbleTable](const auto* data, auto len, const auto* udata) {
+		auto [r, x, y] = calcWobbleTable(data, len);
+		deferExec([this, r, x, y]() { _wobble_c2 = WobbleTable(r, x, y); });
+	});
+
 	subscribeEvent("aidaq::apd0", [this](const auto* data, auto len, const auto* udata) {
 		ADCBuffer buffer = convertEventData(std::vector<uint8_t>(data, data + len));
 		deferExec([this, buffer]() {
@@ -116,7 +140,12 @@ Composer::Composer(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
 				// Found peaks on APD 0!
 				// Issue count events
 
+				// Calculate positions
 				auto [c1pos, c2pos, detpos, tabpos] = getPositions();
+
+				// Calculate wobble at positions
+				auto [wc1x, wc1y] = _wobble_c1.interp(c1pos);
+				auto [wc2x, wc2y] = _wobble_c2.interp(c2pos);
 
 				CountEvent event(
 					peaks, 									   // waveform
@@ -139,7 +168,12 @@ Composer::Composer(int argc, char* argv[]) : mulex::MxBackend(argc, argv)
 					tabpos,									   // Table position
 
 					0.0,									   // C1 temperature
-					0.0										   // C2 temperature
+					0.0,									   // C2 temperature
+					
+					wc1x,									   // C1 wobble x
+					wc2x,									   // C2 wobble x
+					wc1y,									   // C1 wobble y
+					wc2y									   // C2 wobble y
 				);
 
 				if(_write_thread_run.load())
@@ -208,7 +242,8 @@ void Composer::writeHeader(std::uint64_t runno)
 		"pressure0,pressure1,pressure2,"
 		"cli_c1_y,cli_c2_y,cli_c1_x,cli_c2_x,"
 		"pos_c1,pos_c2,pos_det,pos_tab,"
-		"temp_c1,temp_c2\n"
+		"temp_c1,temp_c2,"
+		"wobble_c1_x,wobble_c2_x,wobble_c1_y,wobble_c2_y\n"
 	;
 
 	if(_write_compressed)
@@ -239,7 +274,11 @@ void Composer::writeEventToDisk(const CountEvent& event)
 		std::to_string(event.pos_det) + "," +
 		std::to_string(event.pos_tab) + "," +
 		std::to_string(event.temp_c1) + "," +
-		std::to_string(event.temp_c2) + "\n";
+		std::to_string(event.temp_c2) + "," +
+		std::to_string(event.wobble_c1_x) + "," +
+		std::to_string(event.wobble_c2_x) + "," +
+		std::to_string(event.wobble_c1_y) + "," +
+		std::to_string(event.wobble_c2_y) + "\n";
 
 	if(_write_compressed)
 	{
